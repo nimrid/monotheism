@@ -1,7 +1,7 @@
 // Fallback for using MaterialIcons on Android and web.
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { SymbolWeight, SymbolViewProps } from 'expo-symbols';
+import { SymbolViewProps, SymbolWeight } from 'expo-symbols';
 import { ComponentProps } from 'react';
 import { OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
 
@@ -14,10 +14,77 @@ type IconSymbolName = keyof typeof MAPPING;
  * - see SF Symbols in the [SF Symbols](https://developer.apple.com/sf-symbols/) app.
  */
 const MAPPING = {
+  // Tab bar icons
   'house.fill': 'home',
+  'book': 'menu-book',
+  'magnifyingglass': 'search',
+  'bookmark': 'bookmark',
+  'person': 'person',
+  
+  // Navigation icons
+  'chevron.right': 'chevron-right',
+  'chevron.left': 'chevron-left',
+  'arrow.right': 'arrow-forward',
+  'arrow.left': 'arrow-back',
+  'xmark': 'close',
+  'xmark.circle.fill': 'cancel',
+  
+  // Action icons
+  'checkmark': 'check',
+  'checkmark.circle': 'check-circle-outline',
+  'checkmark.circle.fill': 'check-circle',
+  'heart': 'favorite-border',
+  'heart.fill': 'favorite',
+  'square.and.arrow.up': 'share',
+  'bookmark.fill': 'bookmark',
+  'ellipsis': 'more-horiz',
+  
+  // Book/Reading icons
+  'book.fill': 'menu-book',
+  'lightbulb.fill': 'lightbulb',
+  'text.alignleft': 'format-align-left',
+  'target': 'track-changes',
+  'sparkles': 'auto-awesome',
+  
+  // Religious/Theological icons
+  'cross.fill': 'add',
+  'cross.circle.fill': 'add-circle',
+  'star.fill': 'star',
+  'hand.raised.fill': 'pan-tool',
+  'hands.sparkles.fill': 'volunteer-activism',
+  'eye.fill': 'visibility',
+  'wand.and.stars': 'auto-fix-high',
+  'exclamationmark.triangle.fill': 'warning',
+  
+  // Context/Info icons
+  'building.columns.fill': 'account-balance',
+  'map.fill': 'map',
+  'person.fill': 'person',
+  'calendar': 'calendar-today',
+  'clock': 'access-time',
+  'video.fill': 'videocam',
+  'gearshape': 'settings',
+  'trophy': 'emoji-events',
+  
+  // Theme/UI icons
+  'sun.max': 'wb-sunny',
+  'moon': 'nightlight-round',
+  'bell': 'notifications',
+  'creditcard': 'credit-card',
+  'questionmark.circle': 'help-outline',
+  'textformat': 'format-size',
+  'number': 'tag',
+  'highlighter': 'highlight',
+  'arrow.down.circle': 'arrow-circle-down',
+  'arrow.counterclockwise': 'refresh',
+  
+  // Other commonly used
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
-  'chevron.right': 'chevron-right',
+  'play.fill': 'play-arrow',
+  'pause.fill': 'pause',
+  'info.circle': 'info',
+  'info.circle.fill': 'info',
 } as IconMapping;
 
 /**

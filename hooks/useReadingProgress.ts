@@ -1,0 +1,112 @@
+import {
+    ChapterProgress,
+    completeChapter,
+    getDayProgress,
+    getPlanProgress,
+    getPlanStats,
+    getReadingStreak,
+    PlanStats,
+    ReadingStreak,
+    startReadingChapter,
+    updateReadingPosition,
+} from '@/utils/progress-tracker';
+import { useEffect, useState } from 'react';
+
+export const useReadingProgress = (planId: string | null) => {
+  const [progress, setProgress] = useState<ChapterProgress[]>([]);
+  const [stats, setStats] = useState<PlanStats | null>(null);
+  const [streak, setStreak] = useState<ReadingStreak | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadProgress = async () => {
+    if (!planId) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const [progressData, statsData, streakData] = await Promise.all([
+        getPlanProgress(planId),
+        getPlanStats(planId),
+        getReadingStreak(planId),
+      ]);
+
+      setProgress(progressData);
+      setStats(statsData);
+      setStreak(streakData);
+    } catch (error) {
+      console.error('Error loading reading progress:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProgress();
+  }, [planId]);
+
+  const startChapter = async (chapterData: {
+    chapterId: string;
+    bookName: string;
+    bookId: string;
+    chapterNumber: number;
+    dayNumber: number;
+  }) => {
+    if (!planId) return;
+    await startReadingChapter(planId, chapterData);
+    await loadProgress();
+  };
+
+  const updatePosition = async (chapterData: {
+    chapterId: string;
+    bookName: string;
+    bookId: string;
+    chapterNumber: number;
+    dayNumber: number;
+    progressPercentage: number;
+    lastPosition: number;
+  }) => {
+    if (!planId) return;
+    await updateReadingPosition(planId, chapterData);
+  };
+
+  const finishChapter = async (chapterData: {
+    chapterId: string;
+    bookName: string;
+    bookId: string;
+    chapterNumber: number;
+    dayNumber: number;
+  }) => {
+    if (!planId) return;
+    await completeChapter(planId, chapterData);
+    await loadProgress();
+  };
+
+  const getDayChapters = async (dayNumber: number) => {
+    if (!planId) return [];
+    return await getDayProgress(planId, dayNumber);
+  };
+
+  const isChapterCompleted = (chapterId: string): boolean => {
+    return progress.some(p => p.chapterId === chapterId && p.completed);
+  };
+
+  const getChapterProgress = (chapterId: string): ChapterProgress | undefined => {
+    return progress.find(p => p.chapterId === chapterId);
+  };
+
+  return {
+    progress,
+    stats,
+    streak,
+    loading,
+    startChapter,
+    updatePosition,
+    finishChapter,
+    getDayChapters,
+    isChapterCompleted,
+    getChapterProgress,
+    refresh: loadProgress,
+  };
+};

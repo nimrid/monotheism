@@ -1,0 +1,36 @@
+{
+  "cli": {
+    "version": ">= 18.0.1",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_RAPIDAPI_KEY": "e1e92c1793mshab429576f3ae3a2p1733cbjsn3659884804ea",
+        "EXPO_PUBLIC_RAPIDAPI_HOST": "iq-bible.p.rapidapi.com"
+      }
+    },
+    "preview": {
+      "android": {
+        "buildType": "apk"
+      },
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_RAPIDAPI_KEY": "e1e92c1793mshab429576f3ae3a2p1733cbjsn3659884804ea",
+        "EXPO_PUBLIC_RAPIDAPI_HOST": "iq-bible.p.rapidapi.com"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_RAPIDAPI_KEY": "e1e92c1793mshab429576f3ae3a2p1733cbjsn3659884804ea",
+        "EXPO_PUBLIC_RAPIDAPI_HOST": "iq-bible.p.rapidapi.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
