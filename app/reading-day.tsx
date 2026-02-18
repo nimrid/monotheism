@@ -1,6 +1,8 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useReadingProgress } from '@/hooks/useReadingProgress';
 import { BOOK_ID_MAP } from '@/utils/verse-search';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -16,6 +18,14 @@ import {
 
 const RAPIDAPI_KEY = process.env.EXPO_PUBLIC_RAPIDAPI_KEY;
 const RAPIDAPI_HOST = process.env.EXPO_PUBLIC_RAPIDAPI_HOST;
+
+// Helper to get storage key for specific day/plan
+const getReadChaptersKey = (planId: string | null, dayNum: string | null) => {
+  if (planId && dayNum) {
+    return `@read_chapters_${planId}_day_${dayNum}`;
+  }
+  return '@read_chapters_general';
+};
 
 type ChapterReading = {
   id: string;
@@ -55,22 +65,46 @@ export default function ReadingDayScreen() {
 
   useEffect(() => {
     parseChapters();
-    loadDayProgress();
+    loadReadChapters();
   }, [chapterIds, planId]);
 
-  const loadDayProgress = async () => {
-    if (!planId || !dayNumber) return;
-    
-    const dayProgress = await getDayChapters(parseInt(dayNumber as string));
-    const completedIds = new Set(
-      dayProgress.filter(p => p.completed).map(p => p.chapterId)
-    );
-    setReadChapters(completedIds);
+  const loadReadChapters = async () => {
+    try {
+      const storageKey = getReadChaptersKey(planId as string, dayNumber as string);
+      
+      // Load from AsyncStorage first (immediate)
+      const stored = await AsyncStorage.getItem(storageKey);
+      if (stored) {
+        const readChaptersList = JSON.parse(stored);
+        setReadChapters(new Set(readChaptersList));
+      }
+
+      // Then load from database if we have a plan (more accurate)
+      if (planId && dayNumber) {
+        const dayProgress = await getDayChapters(parseInt(dayNumber as string));
+        const completedIds = dayProgress
+          .filter(p => p.completed)
+          .map(p => p.chapterId);
+        
+        if (completedIds.length > 0) {
+          setReadChapters(new Set(completedIds));
+          // Update AsyncStorage with database data
+          await saveReadChapters(completedIds);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading read chapters:', error);
+    }
   };
 
-  useEffect(() => {
-    parseChapters();
-  }, [chapterIds]);
+  const saveReadChapters = async (chapters: string[]) => {
+    try {
+      const storageKey = getReadChaptersKey(planId as string, dayNumber as string);
+      await AsyncStorage.setItem(storageKey, JSON.stringify(chapters));
+    } catch (error) {
+      console.error('Error saving read chapters:', error);
+    }
+  };
 
   const parseChapters = () => {
     if (!chapterIds) return;
@@ -138,7 +172,11 @@ export default function ReadingDayScreen() {
   };
 
   const markChapterAsRead = async (chapterId: string) => {
-    setReadChapters((prev) => new Set([...prev, chapterId]));
+    const newReadChapters = new Set([...readChapters, chapterId]);
+    setReadChapters(newReadChapters);
+    
+    // Save to AsyncStorage immediately
+    await saveReadChapters(Array.from(newReadChapters));
     
     // Mark as complete in database
     if (planId && selectedChapter) {

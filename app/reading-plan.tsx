@@ -1,5 +1,6 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useReadingProgress } from '@/hooks/useReadingProgress';
 import {
     getReadingPlanPreferences,
     getReadingPlanProgress,

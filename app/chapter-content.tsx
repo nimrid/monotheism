@@ -1,9 +1,12 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useUser } from '@/contexts/UserContext';
+import { API_URL } from '@/utils/api-config';
+import { markChapterAsRead } from '@/utils/reading-plan-manager';
 import { saveReadingProgress } from '@/utils/reading-progress';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 const RAPIDAPI_KEY = process.env.EXPO_PUBLIC_RAPIDAPI_KEY;
 const RAPIDAPI_HOST = process.env.EXPO_PUBLIC_RAPIDAPI_HOST;
@@ -22,6 +25,7 @@ type Verse = {
 
 export default function ChapterContentScreen() {
   const { colors } = useTheme();
+  const { walletAddress } = useUser();
   const params = useLocalSearchParams();
   const router = useRouter();
   const { bookId, bookName, chapterId, testament } = params;
@@ -29,6 +33,8 @@ export default function ChapterContentScreen() {
   const [verses, setVerses] = useState<Verse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedVerse, setSelectedVerse] = useState<number | null>(null);
+  const [savingVerse, setSavingVerse] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const [scrollProgress, setScrollProgress] = useState(0);
 
@@ -144,6 +150,58 @@ export default function ChapterContentScreen() {
     }
   };
 
+  const handleSaveVerse = async (verseIndex: number) => {
+    if (!walletAddress) {
+      Alert.alert(
+        'Wallet Required',
+        'Please connect your wallet to save verses.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Go to Profile', onPress: () => router.push('/(tabs)/profile') },
+        ]
+      );
+      return;
+    }
+
+    const verse = verses[verseIndex];
+    const verseNumber = verse.verse || verse.v || '';
+    const verseText = verse.text || verse.t || '';
+
+    setSavingVerse(true);
+    try {
+      const response = await fetch(`${API_URL}/users/${walletAddress}/saved-verses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bookName: String(bookName),
+          bookId: String(bookId),
+          chapterNumber: parseInt(String(chapterId)),
+          verseNumber: parseInt(verseNumber),
+          verseText: verseText,
+        }),
+      });
+
+      if (response.status === 409) {
+        Alert.alert('Already Saved', 'This verse is already in your saved collection.');
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to save verse');
+      }
+
+      Alert.alert('Saved!', 'Verse saved successfully.');
+      setSelectedVerse(null);
+    } catch (error) {
+      console.error('Error saving verse:', error);
+      Alert.alert('Error', 'Failed to save verse. Please try again.');
+    } finally {
+      setSavingVerse(false);
+    }
+  };
+
   const renderContent = () => {
     if (loading) {
       return (
@@ -180,12 +238,50 @@ export default function ChapterContentScreen() {
         {verses.map((verse, index) => {
           const verseNumber = verse.verse || verse.v || '';
           const verseText = verse.text || verse.t || '';
+          const isSelected = selectedVerse === index;
           
           return (
-            <View key={index} style={styles.verseRow}>
+            <TouchableOpacity
+              key={index}
+              style={[
+                styles.verseRow,
+                isSelected && { backgroundColor: colors.background, padding: 12, borderRadius: 8, marginHorizontal: -12 }
+              ]}
+              onPress={() => setSelectedVerse(isSelected ? null : index)}
+              activeOpacity={0.7}
+            >
               <Text style={[styles.verseNumber, { color: colors.primary }]}>{verseNumber}</Text>
-              <Text style={[styles.verseText, { color: colors.text }]}>{verseText}</Text>
-            </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.verseText, { color: colors.text }]}>{verseText}</Text>
+                {isSelected && (
+                  <View style={styles.verseActions}>
+                    <TouchableOpacity
+                      style={[styles.actionButton, { backgroundColor: colors.primary }]}
+                      onPress={() => handleSaveVerse(index)}
+                      disabled={savingVerse}
+                    >
+                      {savingVerse ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <>
+                          <IconSymbol name="bookmark" size={16} color="#fff" />
+                          <Text style={styles.actionButtonText}>Save</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionButton, { backgroundColor: colors.card }]}
+                      onPress={() => {
+                        // Share functionality
+                      }}
+                    >
+                      <IconSymbol name="square.and.arrow.up" size={16} color={colors.text} />
+                      <Text style={[styles.actionButtonText, { color: colors.text }]}>Share</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            </TouchableOpacity>
           );
         })}
       </View>
@@ -280,6 +376,24 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 17,
     lineHeight: 28,
+  },
+  verseActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  actionButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
   },
   centerContainer: {
     flex: 1,

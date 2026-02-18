@@ -1,5 +1,7 @@
 // Reading progress tracking service
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
+import { API_URL } from './api-config';
+
+const API_BASE_URL = API_URL;
 
 export type ChapterProgress = {
   id: string;

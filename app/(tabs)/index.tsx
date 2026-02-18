@@ -1,12 +1,15 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useUser } from '@/contexts/UserContext';
+import { API_URL } from '@/utils/api-config';
+import { DayStreak, getDayStreak, updateDayStreak } from '@/utils/day-streak';
 import { getPlanProgress, type ReadingPlanStreak } from '@/utils/reading-plan-manager';
 import { getReadingProgress, ReadingProgress } from '@/utils/reading-progress';
 import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 type VerseOfDay = {
   bookname: string;
@@ -17,12 +20,15 @@ type VerseOfDay = {
 
 export default function HomeScreen() {
   const { colors } = useTheme();
+  const { walletAddress } = useUser();
   const router = useRouter();
   const [verseOfDay, setVerseOfDay] = useState<VerseOfDay | null>(null);
   const [loading, setLoading] = useState(true);
+  const [savingVerse, setSavingVerse] = useState(false);
   const [timeOfDay, setTimeOfDay] = useState<'morning' | 'afternoon' | 'evening' | 'night'>('morning');
   const [readingProgress, setReadingProgress] = useState<ReadingProgress | null>(null);
   const [planStreak, setPlanStreak] = useState<ReadingPlanStreak | null>(null);
+  const [dayStreak, setDayStreak] = useState<DayStreak | null>(null);
   const [hasActivePlan, setHasActivePlan] = useState(false);
   const [planProgress, setPlanProgress] = useState(0);
 
@@ -31,14 +37,24 @@ export default function HomeScreen() {
     determineTimeOfDay();
     loadReadingProgress();
     loadPlanData();
+    loadDayStreak();
   }, []);
 
   useFocusEffect(
     React.useCallback(() => {
       loadReadingProgress();
       loadPlanData();
+      loadDayStreak();
     }, [])
   );
+
+  const loadDayStreak = async () => {
+    const streak = await getDayStreak();
+    setDayStreak(streak);
+    // Update streak when user opens the app
+    const updatedStreak = await updateDayStreak();
+    setDayStreak(updatedStreak);
+  };
 
   const loadReadingProgress = async () => {
     const progress = await getReadingProgress();
@@ -123,6 +139,55 @@ export default function HomeScreen() {
         return '🌕';
     }
   };
+
+  const handleSaveVerseOfDay = async () => {
+    if (!walletAddress) {
+      Alert.alert(
+        'Wallet Required',
+        'Please connect your wallet to save verses.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Go to Profile', onPress: () => router.push('/(tabs)/profile') },
+        ]
+      );
+      return;
+    }
+
+    if (!verseOfDay) return;
+
+    setSavingVerse(true);
+    try {
+      const response = await fetch(`${API_URL}/users/${walletAddress}/saved-verses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bookName: verseOfDay.bookname,
+          bookId: '1', // Default to Genesis, adjust as needed
+          chapterNumber: parseInt(verseOfDay.chapter),
+          verseNumber: parseInt(verseOfDay.verse),
+          verseText: verseOfDay.text,
+        }),
+      });
+
+      if (response.status === 409) {
+        Alert.alert('Already Saved', 'This verse is already in your saved collection.');
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to save verse');
+      }
+
+      Alert.alert('Saved!', 'Verse of the day saved successfully.');
+    } catch (error) {
+      console.error('Error saving verse:', error);
+      Alert.alert('Error', 'Failed to save verse. Please try again.');
+    } finally {
+      setSavingVerse(false);
+    }
+  };
   
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.contentContainer}>
@@ -167,9 +232,19 @@ export default function HomeScreen() {
 
           {/* Action Buttons */}
           <View style={styles.actionButtons}>
-            <TouchableOpacity style={styles.button}>
-              <IconSymbol name="heart" size={18} color="#fff" />
-              <Text style={styles.buttonText}>Save</Text>
+            <TouchableOpacity 
+              style={styles.button}
+              onPress={handleSaveVerseOfDay}
+              disabled={savingVerse}
+            >
+              {savingVerse ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <IconSymbol name="heart" size={18} color="#fff" />
+                  <Text style={styles.buttonText}>Save</Text>
+                </>
+              )}
             </TouchableOpacity>
             
             <TouchableOpacity style={styles.button}>
@@ -291,7 +366,7 @@ export default function HomeScreen() {
             </View>
             <View>
               <Text style={[styles.streakNumber, { color: colors.text }]}>
-                {planStreak?.currentStreak || 0}
+                {dayStreak?.currentStreak || 0}
               </Text>
               <Text style={[styles.streakLabel, { color: colors.secondaryText }]}>Day Streak</Text>
             </View>
@@ -300,7 +375,7 @@ export default function HomeScreen() {
           <View style={styles.streakRight}>
             <IconSymbol name="trophy" size={18} color={colors.tertiaryText} />
             <Text style={[styles.bestStreak, { color: colors.tertiaryText }]}>
-              Best: {planStreak?.bestStreak || 0}
+              Best: {dayStreak?.longestStreak || 0}
             </Text>
           </View>
         </View>
@@ -331,10 +406,10 @@ export default function HomeScreen() {
         <View style={[styles.totalDaysCard, { backgroundColor: colors.background }]}>
           <IconSymbol name="calendar" size={20} color={colors.tertiaryText} />
           <Text style={[styles.totalDaysText, { color: colors.secondaryText }]}>
-            {hasActivePlan ? 'Days completed in plan' : 'Total days read'}
+            Total days active
           </Text>
           <Text style={[styles.totalDaysNumber, { color: colors.primary }]}>
-            {planStreak?.totalDaysCompleted || 0}
+            {dayStreak?.totalDaysActive || 0}
           </Text>
         </View>
 
@@ -457,6 +532,20 @@ export default function HomeScreen() {
         
         <TouchableOpacity 
           style={[styles.sermonCard, { backgroundColor: colors.card }]}
+          onPress={() => router.push('/bible-definition')}
+        >
+          <View style={[styles.sermonIcon, { backgroundColor: colors.background }]}>
+            <IconSymbol name="book.closed.fill" size={24} color={colors.secondaryText} />
+          </View>
+          <View style={styles.sermonContent}>
+            <Text style={[styles.sermonTitle, { color: colors.text }]}>Bible Dictionary</Text>
+            <Text style={[styles.sermonSubtitle, { color: colors.tertiaryText }]}>Look up biblical terms & definitions</Text>
+          </View>
+          <IconSymbol name="chevron.right" size={20} color={colors.tertiaryText} />
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.sermonCard, { backgroundColor: colors.card, marginTop: 12 }]}
           onPress={() => router.push('/hermeneutics')}
         >
           <View style={[styles.sermonIcon, { backgroundColor: colors.background }]}>

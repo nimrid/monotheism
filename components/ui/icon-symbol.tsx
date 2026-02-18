@@ -38,9 +38,11 @@ const MAPPING = {
   'square.and.arrow.up': 'share',
   'bookmark.fill': 'bookmark',
   'ellipsis': 'more-horiz',
+  'doc.on.doc': 'content-copy',
   
   // Book/Reading icons
   'book.fill': 'menu-book',
+  'book.closed.fill': 'import-contacts',
   'lightbulb.fill': 'lightbulb',
   'text.alignleft': 'format-align-left',
   'target': 'track-changes',
@@ -85,6 +87,7 @@ const MAPPING = {
   'pause.fill': 'pause',
   'info.circle': 'info',
   'info.circle.fill': 'info',
+  'trash': 'delete',
 } as IconMapping;
 
 /**

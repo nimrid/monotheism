@@ -49,9 +49,19 @@ pool.query('SELECT NOW()', (err, res) => {
 // Create reading_plans table if it doesn't exist
 const initDB = async () => {
   const createTablesQuery = `
+    -- Users Table (Primary table linking everything)
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      wallet_address VARCHAR(255) UNIQUE NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Reading Plans Table
     CREATE TABLE IF NOT EXISTS reading_plans (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
       name VARCHAR(255) NOT NULL,
       days INTEGER NOT NULL,
       start_date DATE NOT NULL,
@@ -64,6 +74,7 @@ const initDB = async () => {
     -- Reading Progress Table
     CREATE TABLE IF NOT EXISTS reading_progress (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
       plan_id UUID REFERENCES reading_plans(id) ON DELETE CASCADE,
       chapter_id VARCHAR(50) NOT NULL,
       book_name VARCHAR(100) NOT NULL,
@@ -83,6 +94,7 @@ const initDB = async () => {
     -- Daily Reading Sessions Table
     CREATE TABLE IF NOT EXISTS reading_sessions (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
       plan_id UUID REFERENCES reading_plans(id) ON DELETE CASCADE,
       day_number INTEGER NOT NULL,
       session_date DATE NOT NULL,
@@ -95,11 +107,40 @@ const initDB = async () => {
       UNIQUE(plan_id, day_number)
     );
 
+    -- Saved Verses Table
+    CREATE TABLE IF NOT EXISTS saved_verses (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      book_name VARCHAR(100) NOT NULL,
+      book_id VARCHAR(10) NOT NULL,
+      chapter_number INTEGER NOT NULL,
+      verse_number INTEGER NOT NULL,
+      verse_text TEXT NOT NULL,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Bible Definitions Search History
+    CREATE TABLE IF NOT EXISTS definition_searches (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      search_term VARCHAR(255) NOT NULL,
+      result_word VARCHAR(255),
+      result_definition TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Create indexes for better query performance
+    CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address);
+    CREATE INDEX IF NOT EXISTS idx_reading_plans_user_id ON reading_plans(user_id);
+    CREATE INDEX IF NOT EXISTS idx_reading_progress_user_id ON reading_progress(user_id);
     CREATE INDEX IF NOT EXISTS idx_reading_progress_plan_id ON reading_progress(plan_id);
     CREATE INDEX IF NOT EXISTS idx_reading_progress_completed ON reading_progress(completed);
+    CREATE INDEX IF NOT EXISTS idx_reading_sessions_user_id ON reading_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_reading_sessions_plan_id ON reading_sessions(plan_id);
     CREATE INDEX IF NOT EXISTS idx_reading_sessions_date ON reading_sessions(session_date);
+    CREATE INDEX IF NOT EXISTS idx_saved_verses_user_id ON saved_verses(user_id);
+    CREATE INDEX IF NOT EXISTS idx_definition_searches_user_id ON definition_searches(user_id);
   `;
   
   try {
@@ -111,6 +152,216 @@ const initDB = async () => {
 };
 
 initDB();
+
+// ============================================
+// USER / WALLET ENDPOINTS
+// ============================================
+
+// Connect wallet - creates or updates user
+app.post('/api/users/connect-wallet', async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    
+    if (!walletAddress) {
+      return res.status(400).json({ error: 'Wallet address is required' });
+    }
+    
+    // Upsert user - create if doesn't exist, update last_active if exists
+    const result = await pool.query(
+      `INSERT INTO users (wallet_address, last_active)
+       VALUES ($1, CURRENT_TIMESTAMP)
+       ON CONFLICT (wallet_address) 
+       DO UPDATE SET 
+         last_active = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [walletAddress]
+    );
+    
+    const user = result.rows[0];
+    
+    res.json({
+      id: user.id,
+      walletAddress: user.wallet_address,
+      createdAt: user.created_at,
+      lastActive: user.last_active,
+    });
+  } catch (error) {
+    console.error('Error connecting wallet:', error);
+    res.status(500).json({ error: 'Failed to connect wallet' });
+  }
+});
+
+// Get user by wallet address
+app.get('/api/users/:walletAddress', async (req, res) => {
+  try {
+    const { walletAddress } = req.params;
+    
+    const result = await pool.query(
+      'SELECT * FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const user = result.rows[0];
+    
+    res.json({
+      id: user.id,
+      walletAddress: user.wallet_address,
+      createdAt: user.created_at,
+      lastActive: user.last_active,
+    });
+  } catch (error) {
+    console.error('Error fetching user:', error);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// ============================================
+// SAVED VERSES ENDPOINTS
+// ============================================
+
+// Get all saved verses for a user
+app.get('/api/users/:walletAddress/saved-verses', async (req, res) => {
+  try {
+    const { walletAddress } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
+    // Get saved verses
+    const result = await pool.query(
+      `SELECT * FROM saved_verses 
+       WHERE user_id = $1 
+       ORDER BY created_at DESC`,
+      [userId]
+    );
+    
+    const verses = result.rows.map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      bookName: row.book_name,
+      bookId: row.book_id,
+      chapterNumber: row.chapter_number,
+      verseNumber: row.verse_number,
+      verseText: row.verse_text,
+      notes: row.notes,
+      createdAt: row.created_at,
+    }));
+    
+    res.json(verses);
+  } catch (error) {
+    console.error('Error fetching saved verses:', error);
+    res.status(500).json({ error: 'Failed to fetch saved verses' });
+  }
+});
+
+// Save a verse
+app.post('/api/users/:walletAddress/saved-verses', async (req, res) => {
+  try {
+    const { walletAddress } = req.params;
+    const { bookName, bookId, chapterNumber, verseNumber, verseText, notes } = req.body;
+    
+    if (!bookName || !bookId || !chapterNumber || !verseNumber || !verseText) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
+    // Check if verse is already saved
+    const existingVerse = await pool.query(
+      `SELECT id FROM saved_verses 
+       WHERE user_id = $1 AND book_id = $2 AND chapter_number = $3 AND verse_number = $4`,
+      [userId, bookId, chapterNumber, verseNumber]
+    );
+    
+    if (existingVerse.rows.length > 0) {
+      return res.status(409).json({ error: 'Verse already saved' });
+    }
+    
+    // Save verse
+    const result = await pool.query(
+      `INSERT INTO saved_verses (user_id, book_name, book_id, chapter_number, verse_number, verse_text, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [userId, bookName, bookId, chapterNumber, verseNumber, verseText, notes || null]
+    );
+    
+    const row = result.rows[0];
+    const savedVerse = {
+      id: row.id,
+      userId: row.user_id,
+      bookName: row.book_name,
+      bookId: row.book_id,
+      chapterNumber: row.chapter_number,
+      verseNumber: row.verse_number,
+      verseText: row.verse_text,
+      notes: row.notes,
+      createdAt: row.created_at,
+    };
+    
+    res.status(201).json(savedVerse);
+  } catch (error) {
+    console.error('Error saving verse:', error);
+    res.status(500).json({ error: 'Failed to save verse' });
+  }
+});
+
+// Delete a saved verse
+app.delete('/api/users/:walletAddress/saved-verses/:verseId', async (req, res) => {
+  try {
+    const { walletAddress, verseId } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
+    // Delete verse
+    const result = await pool.query(
+      'DELETE FROM saved_verses WHERE id = $1 AND user_id = $2 RETURNING *',
+      [verseId, userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Saved verse not found' });
+    }
+    
+    res.json({ message: 'Verse deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting saved verse:', error);
+    res.status(500).json({ error: 'Failed to delete saved verse' });
+  }
+});
 
 // Get all reading plans
 app.get('/api/reading-plans', async (req, res) => {

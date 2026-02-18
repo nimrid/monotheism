@@ -1,8 +1,12 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useUser } from '@/contexts/UserContext';
 import { useReadingProgress } from '@/hooks/useReadingProgress';
+import { DayStreak, getDayStreak } from '@/utils/day-streak';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
+import { PublicKey } from '@solana/web3.js';
+import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
@@ -18,28 +22,33 @@ if (Platform.OS === 'android' && Constants.appOwnership !== 'expo') {
   }
 }
 
-const WALLET_KEY = '@wallet_address';
-
 export default function ProfileScreen() {
   const { isDarkMode, toggleTheme, colors } = useTheme();
   const router = useRouter();
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const { user, walletAddress, connectWallet: saveWallet, disconnectWallet: removeWallet } = useUser();
   const [connecting, setConnecting] = useState(false);
   const [activePlanId, setActivePlanId] = useState<string | null>(null);
+  const [dayStreak, setDayStreak] = useState<DayStreak | null>(null);
 
   // Use progress tracking hook
   const { stats, streak, loading } = useReadingProgress(activePlanId);
 
   useEffect(() => {
-    loadWalletAddress();
     loadActivePlanId();
+    loadDayStreak();
   }, []);
 
   useFocusEffect(
     React.useCallback(() => {
       loadActivePlanId();
+      loadDayStreak();
     }, [])
   );
+
+  const loadDayStreak = async () => {
+    const streak = await getDayStreak();
+    setDayStreak(streak);
+  };
 
   const loadActivePlanId = async () => {
     try {
@@ -50,18 +59,7 @@ export default function ProfileScreen() {
     }
   };
 
-  const loadWalletAddress = async () => {
-    try {
-      const savedAddress = await AsyncStorage.getItem(WALLET_KEY);
-      if (savedAddress) {
-        setWalletAddress(savedAddress);
-      }
-    } catch (error) {
-      console.error('Failed to load wallet address:', error);
-    }
-  };
-
-  const connectWallet = async () => {
+  const handleConnectWallet = async () => {
     if (!transact) {
       Alert.alert(
         'Not Available',
@@ -76,17 +74,49 @@ export default function ProfileScreen() {
         const authResult = await wallet.authorize({
           cluster: 'mainnet-beta',
           identity: {
-            name: 'Bible App',
-            uri: 'https://yourbibleapp.com',
+            name: 'Monotheism',
+            uri: 'https://monotheism.com',
             icon: 'favicon.ico',
           },
         });
 
-        const address = authResult.accounts[0].address;
-        setWalletAddress(address);
-        await AsyncStorage.setItem(WALLET_KEY, address);
+        // Get the address - convert to base58 string
+        let addressString: string;
+        const rawAddress = authResult.accounts[0].address;
         
-        Alert.alert('Success', 'Wallet connected successfully!');
+        try {
+          // If it's a Uint8Array, convert to PublicKey then to base58
+          if (rawAddress instanceof Uint8Array) {
+            const publicKey = new PublicKey(rawAddress);
+            addressString = publicKey.toBase58();
+          } 
+          // If it's already a PublicKey object
+          else if (rawAddress && typeof rawAddress === 'object' && 'toBase58' in rawAddress) {
+            addressString = rawAddress.toBase58();
+          }
+          // If it's already a string
+          else if (typeof rawAddress === 'string') {
+            addressString = rawAddress;
+          }
+          // Fallback: try to create PublicKey from whatever we have
+          else {
+            const publicKey = new PublicKey(rawAddress);
+            addressString = publicKey.toBase58();
+          }
+        } catch (conversionError) {
+          console.error('Address conversion error:', conversionError);
+          throw new Error('Failed to convert wallet address to readable format');
+        }
+        
+        console.log('Connected wallet address:', addressString);
+        
+        // Save wallet using context (saves to both AsyncStorage and database)
+        await saveWallet(addressString);
+        
+        Alert.alert(
+          'Success', 
+          `Wallet connected!\n\n${addressString.slice(0, 8)}...${addressString.slice(-8)}`
+        );
       });
     } catch (error: any) {
       console.error('Wallet connection error:', error);
@@ -96,7 +126,7 @@ export default function ProfileScreen() {
     }
   };
 
-  const disconnectWallet = async () => {
+  const handleDisconnectWallet = async () => {
     if (transact) {
       try {
         await transact(async (wallet) => {
@@ -109,13 +139,20 @@ export default function ProfileScreen() {
       }
     }
 
-    setWalletAddress(null);
-    await AsyncStorage.removeItem(WALLET_KEY);
+    await removeWallet();
     Alert.alert('Disconnected', 'Wallet disconnected successfully');
   };
 
   const formatAddress = (address: string) => {
-    return `${address.slice(0, 4)}...${address.slice(-4)}`;
+    if (!address || address.length < 12) return address;
+    return `${address.slice(0, 6)}...${address.slice(-6)}`;
+  };
+
+  const copyAddress = async () => {
+    if (walletAddress) {
+      await Clipboard.setStringAsync(walletAddress);
+      Alert.alert('Copied!', 'Wallet address copied to clipboard');
+    }
   };
 
   return (
@@ -142,10 +179,18 @@ export default function ProfileScreen() {
         </Text>
         {walletAddress ? (
           <>
-            <Text style={[styles.walletAddress, { color: colors.secondaryText }]}>{formatAddress(walletAddress)}</Text>
+            <View style={styles.addressContainer}>
+              <Text style={[styles.walletAddress, { color: colors.secondaryText }]}>{formatAddress(walletAddress)}</Text>
+              <TouchableOpacity 
+                style={[styles.copyButton, { backgroundColor: colors.buttonBg }]}
+                onPress={copyAddress}
+              >
+                <IconSymbol name="doc.on.doc" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
             <TouchableOpacity 
               style={[styles.disconnectButton, { backgroundColor: colors.buttonBg, borderColor: colors.border }]}
-              onPress={disconnectWallet}
+              onPress={handleDisconnectWallet}
             >
               <Text style={[styles.disconnectButtonText, { color: colors.secondaryText }]}>Disconnect Wallet</Text>
             </TouchableOpacity>
@@ -157,7 +202,7 @@ export default function ProfileScreen() {
             </Text>
             <TouchableOpacity 
               style={styles.connectButton}
-              onPress={connectWallet}
+              onPress={handleConnectWallet}
               disabled={connecting}
             >
               <Text style={styles.connectButtonText}>
@@ -173,7 +218,7 @@ export default function ProfileScreen() {
         <View style={[styles.statCard, { backgroundColor: colors.card }]}>
           <Text style={styles.statIcon}>🔥</Text>
           <Text style={[styles.statNumber, { color: colors.text }]}>
-            {loading ? '...' : streak?.currentStreak || 0}
+            {dayStreak?.currentStreak || 0}
           </Text>
           <Text style={[styles.statLabel, { color: colors.tertiaryText }]}>Day Streak</Text>
         </View>
@@ -189,7 +234,7 @@ export default function ProfileScreen() {
         <View style={[styles.statCard, { backgroundColor: colors.card }]}>
           <Text style={styles.statIcon}>🏆</Text>
           <Text style={[styles.statNumber, { color: colors.text }]}>
-            {loading ? '...' : streak?.bestStreak || 0}
+            {dayStreak?.longestStreak || 0}
           </Text>
           <Text style={[styles.statLabel, { color: colors.tertiaryText }]}>Best Streak</Text>
         </View>
@@ -321,11 +366,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 24,
   },
+  addressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 24,
+  },
   walletAddress: {
     fontSize: 16,
     fontWeight: '600',
     fontFamily: 'monospace',
-    marginBottom: 24,
+  },
+  copyButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   connectButton: {
     backgroundColor: '#ff9500',

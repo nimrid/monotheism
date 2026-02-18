@@ -1,7 +1,8 @@
 // Database utility for reading plans
 // This uses fetch to communicate with your backend API
+import { API_URL } from './api-config';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL = API_URL;
 
 export type SavedReadingPlan = {
   id: string;
