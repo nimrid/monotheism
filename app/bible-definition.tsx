@@ -1,36 +1,25 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useUser } from '@/contexts/UserContext';
-import { Connection, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
-import Constants from 'expo-constants';
+import { PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
-// Only import on native Android with development build
-let transact: any = null;
-if (Platform.OS === 'android' && Constants.appOwnership !== 'expo') {
-  try {
-    transact = require('@solana-mobile/mobile-wallet-adapter-protocol-web3js').transact;
-  } catch (e) {
-    console.log('Solana Mobile Wallet Adapter not available');
-  }
-}
-
 const RECIPIENT_WALLET = 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
-const SEARCH_COST_LAMPORTS = 10000; // 0.00001 SOL (devnet)
+const SEARCH_COST_LAMPORTS = 2000000; // 0.002 SOL (devnet)
 
 type DefinitionResult = {
   word: string;
@@ -40,7 +29,7 @@ type DefinitionResult = {
 export default function BibleDefinitionScreen() {
   const { colors } = useTheme();
   const router = useRouter();
-  const { walletAddress } = useUser();
+  const { account, signAndSendTransaction, connection } = useMobileWallet();
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<DefinitionResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -50,99 +39,72 @@ export default function BibleDefinitionScreen() {
   const fadeAnim = useState(new Animated.Value(0))[0];
 
   const handlePayAndSearch = async () => {
-    if (!query.trim()) return;
+      if (!query.trim()) return;
 
-    // Check if wallet is connected
-    if (!walletAddress) {
-      Alert.alert(
-        'Wallet Required',
-        'Please connect your wallet to search Bible definitions.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Go to Profile', onPress: () => router.push('/(tabs)/profile') },
-        ]
-      );
-      return;
-    }
+      // Check if wallet is connected
+      if (!account?.address) {
+        Alert.alert(
+          'Wallet Required',
+          'Please connect your wallet to search Bible definitions.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Go to Profile', onPress: () => router.push('/(tabs)/profile') },
+          ]
+        );
+        return;
+      }
 
-    // Check if wallet adapter is available
-    if (!transact) {
-      Alert.alert(
-        'Not Available',
-        'Solana Mobile Wallet Adapter requires a development build. Please run: npx expo run:android'
-      );
-      return;
-    }
+      setPaying(true);
+      setError(null);
 
-    setPaying(true);
-    setError(null);
+      try {
+        console.log('Creating payment transaction...');
+        console.log('From:', account.address.toBase58());
+        console.log('To:', RECIPIENT_WALLET);
+        console.log('Amount:', SEARCH_COST_LAMPORTS, 'lamports (0.002 SOL)');
 
-    try {
-      await transact(async (wallet: any) => {
-        // Get connection to devnet
-        const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
-
-        // Authorize wallet
-        const authResult = await wallet.authorize({
-          cluster: 'devnet',
-          identity: {
-            name: 'Monotheism',
-            uri: 'https://monotheism.com',
-            icon: 'favicon.ico',
-          },
-        });
-
-        // Get latest blockhash
-        const {
-          context: { slot: minContextSlot },
-          value: { blockhash, lastValidBlockHeight },
-        } = await connection.getLatestBlockhashAndContext();
+        // Get latest blockhash with context
+        const { context, value: { blockhash } } = await connection.getLatestBlockhashAndContext();
 
         // Create transaction
         const transaction = new Transaction({
-          feePayer: new PublicKey(authResult.accounts[0].address),
-          blockhash,
-          lastValidBlockHeight,
+          recentBlockhash: blockhash,
+          feePayer: account.address,
         }).add(
           SystemProgram.transfer({
-            fromPubkey: new PublicKey(authResult.accounts[0].address),
+            fromPubkey: account.address,
             toPubkey: new PublicKey(RECIPIENT_WALLET),
             lamports: SEARCH_COST_LAMPORTS,
           })
         );
 
-        // Sign and send transaction
-        const signedTransactions = await wallet.signTransactions({
-          transactions: [transaction],
-        });
+        console.log('Sending transaction...');
 
-        const signature = await connection.sendRawTransaction(signedTransactions[0].serialize(), {
-          skipPreflight: false,
-          preflightCommitment: 'confirmed',
-        });
+        // Sign and send transaction using useMobileWallet
+        // minContextSlot ensures the transaction is processed after this slot
+        const signature = await signAndSendTransaction(transaction, context.slot);
 
-        console.log('Payment transaction sent:', signature);
-
-        // Wait for confirmation
-        await connection.confirmTransaction({
-          signature,
-          blockhash,
-          lastValidBlockHeight,
-        });
-
+        console.log('Payment transaction signature:', signature);
         console.log('Payment confirmed, proceeding with search');
 
         // Payment successful, now search
         await searchDefinition();
-      });
-    } catch (error: any) {
-      console.error('Payment failed:', error);
-      setError('Payment failed. Please try again.');
-      Alert.alert('Payment Failed', error.message || 'Unable to process payment');
-    } finally {
-      setPaying(false);
+      } catch (error: any) {
+        console.error('Payment failed:', error);
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name,
+        });
+        setError('Payment failed. Please try again.');
+        Alert.alert(
+          'Payment Failed',
+          error.message || 'Unable to process payment. Make sure you have enough SOL in your wallet and are connected to devnet.'
+        );
+      } finally {
+        setPaying(false);
+      }
     }
-  };
 
   const searchDefinition = async () => {
     if (!query.trim()) return;
@@ -246,7 +208,7 @@ export default function BibleDefinitionScreen() {
           {/* Payment Info */}
           <View style={styles.paymentInfo}>
             <Text style={styles.paymentInfoText}>
-              💰 0.00001 SOL per search (Devnet)
+              💰 0.002 SOL per search (Devnet)
             </Text>
           </View>
 
@@ -394,7 +356,7 @@ export default function BibleDefinitionScreen() {
                 Smith's Bible Dictionary provides detailed definitions of biblical terms, names, places, and concepts to enhance your understanding of Scripture.
               </Text>
               <Text style={[styles.infoText, { color: colors.secondaryText, marginTop: 8 }]}>
-                Each search costs 0.00001 SOL on Devnet. Connect your wallet to get started.
+                Each search costs 0.002 SOL on Devnet. Connect your wallet to get started.
               </Text>
             </View>
           </View>

@@ -1,4 +1,10 @@
+// IMPORTANT: This must be imported FIRST before any Solana imports
+// Polyfill for crypto.getRandomValues() required by Solana libraries
+import 'react-native-get-random-values';
+
 import { DarkTheme, DefaultTheme, ThemeProvider as NavigationThemeProvider } from '@react-navigation/native';
+import { clusterApiUrl } from '@solana/web3.js';
+import { MobileWalletProvider } from '@wallet-ui/react-native-web3js';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
@@ -26,11 +32,25 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
+  const chain = 'solana:devnet';
+  const endpoint = clusterApiUrl('devnet');
+  const identity = {
+    name: 'Monotheism',
+    uri: 'https://monotheism.com',
+    icon: 'favicon.ico',
+  };
+
   return (
-    <ThemeProvider>
-      <UserProvider>
-        <RootLayoutNav />
-      </UserProvider>
-    </ThemeProvider>
+    <MobileWalletProvider
+      chain={chain}
+      endpoint={endpoint}
+      identity={identity}
+    >
+      <ThemeProvider>
+        <UserProvider>
+          <RootLayoutNav />
+        </UserProvider>
+      </ThemeProvider>
+    </MobileWalletProvider>
   );
 }

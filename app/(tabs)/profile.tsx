@@ -5,27 +5,17 @@ import { useReadingProgress } from '@/hooks/useReadingProgress';
 import { DayStreak, getDayStreak } from '@/utils/day-streak';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
-import { PublicKey } from '@solana/web3.js';
+import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import * as Clipboard from 'expo-clipboard';
-import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-
-// Only import on native Android with development build
-let transact: any = null;
-if (Platform.OS === 'android' && Constants.appOwnership !== 'expo') {
-  try {
-    transact = require('@solana-mobile/mobile-wallet-adapter-protocol-web3js').transact;
-  } catch (e) {
-    console.log('Solana Mobile Wallet Adapter not available');
-  }
-}
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function ProfileScreen() {
   const { isDarkMode, toggleTheme, colors } = useTheme();
   const router = useRouter();
   const { user, walletAddress, connectWallet: saveWallet, disconnectWallet: removeWallet } = useUser();
+  const { account, connect, disconnect } = useMobileWallet();
   const [connecting, setConnecting] = useState(false);
   const [activePlanId, setActivePlanId] = useState<string | null>(null);
   const [dayStreak, setDayStreak] = useState<DayStreak | null>(null);
@@ -37,6 +27,20 @@ export default function ProfileScreen() {
     loadActivePlanId();
     loadDayStreak();
   }, []);
+
+  // Sync wallet address when account changes from useMobileWallet
+  useEffect(() => {
+    const syncWallet = async () => {
+      if (account?.address) {
+        const addressString = account.address.toBase58();
+        if (addressString !== walletAddress) {
+          console.log('Syncing wallet address from useMobileWallet:', addressString);
+          await saveWallet(addressString);
+        }
+      }
+    };
+    syncWallet();
+  }, [account]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -60,64 +64,32 @@ export default function ProfileScreen() {
   };
 
   const handleConnectWallet = async () => {
-    if (!transact) {
-      Alert.alert(
-        'Not Available',
-        'Solana Mobile Wallet Adapter requires a development build. Please run: npx expo run:android'
-      );
-      return;
-    }
-
     setConnecting(true);
     try {
-      await transact(async (wallet) => {
-        const authResult = await wallet.authorize({
-          cluster: 'mainnet-beta',
-          identity: {
-            name: 'Monotheism',
-            uri: 'https://monotheism.com',
-            icon: 'favicon.ico',
-          },
-        });
-
-        // Get the address - convert to base58 string
-        let addressString: string;
-        const rawAddress = authResult.accounts[0].address;
-        
-        try {
-          // If it's a Uint8Array, convert to PublicKey then to base58
-          if (rawAddress instanceof Uint8Array) {
-            const publicKey = new PublicKey(rawAddress);
-            addressString = publicKey.toBase58();
-          } 
-          // If it's already a PublicKey object
-          else if (rawAddress && typeof rawAddress === 'object' && 'toBase58' in rawAddress) {
-            addressString = rawAddress.toBase58();
-          }
-          // If it's already a string
-          else if (typeof rawAddress === 'string') {
-            addressString = rawAddress;
-          }
-          // Fallback: try to create PublicKey from whatever we have
-          else {
-            const publicKey = new PublicKey(rawAddress);
-            addressString = publicKey.toBase58();
-          }
-        } catch (conversionError) {
-          console.error('Address conversion error:', conversionError);
-          throw new Error('Failed to convert wallet address to readable format');
-        }
+      // Use the useMobileWallet hook's connect method
+      await connect();
+      
+      // Get the connected account address
+      if (account?.address) {
+        const addressString = account.address.toBase58();
         
         console.log('Connected wallet address:', addressString);
+        console.log('Address length:', addressString.length);
+        
+        // Validate address format (Solana addresses are 32-44 characters)
+        if (addressString.length < 32 || addressString.length > 44) {
+          console.error('Invalid address length:', addressString.length);
+          throw new Error('Invalid wallet address format');
+        }
         
         // Save wallet using context (saves to both AsyncStorage and database)
         await saveWallet(addressString);
         
         Alert.alert(
           'Success', 
-          `Wallet connected!\n\n${addressString.slice(0, 8)}...${addressString.slice(-8)}`
+          `Wallet connected!\n\nFull address: ${addressString}\n\nShort: ${addressString.slice(0, 8)}...${addressString.slice(-8)}`
         );
-      });
+      }
     } catch (error: any) {
       console.error('Wallet connection error:', error);
       Alert.alert('Connection Failed', error.message || 'Failed to connect wallet');
@@ -127,20 +99,14 @@ export default function ProfileScreen() {
   };
 
   const handleDisconnectWallet = async () => {
-    if (transact) {
-      try {
-        await transact(async (wallet) => {
-          await wallet.deauthorize({
-            auth_token: '', // The auth token from authorize
-          });
-        });
-      } catch (error) {
-        console.error('Deauthorize error:', error);
-      }
+    try {
+      await disconnect();
+      await removeWallet();
+      Alert.alert('Disconnected', 'Wallet disconnected successfully');
+    } catch (error) {
+      console.error('Disconnect error:', error);
+      Alert.alert('Error', 'Failed to disconnect wallet');
     }
-
-    await removeWallet();
-    Alert.alert('Disconnected', 'Wallet disconnected successfully');
   };
 
   const formatAddress = (address: string) => {
@@ -151,7 +117,23 @@ export default function ProfileScreen() {
   const copyAddress = async () => {
     if (walletAddress) {
       await Clipboard.setStringAsync(walletAddress);
-      Alert.alert('Copied!', 'Wallet address copied to clipboard');
+      Alert.alert(
+        'Copied!', 
+        `Full wallet address copied to clipboard:\n\n${walletAddress}`
+      );
+    }
+  };
+
+  const showFullAddress = () => {
+    if (walletAddress) {
+      Alert.alert(
+        'Full Wallet Address',
+        walletAddress,
+        [
+          { text: 'Copy', onPress: copyAddress },
+          { text: 'Close', style: 'cancel' }
+        ]
+      );
     }
   };
 
@@ -180,7 +162,11 @@ export default function ProfileScreen() {
         {walletAddress ? (
           <>
             <View style={styles.addressContainer}>
-              <Text style={[styles.walletAddress, { color: colors.secondaryText }]}>{formatAddress(walletAddress)}</Text>
+              <TouchableOpacity onPress={showFullAddress}>
+                <Text style={[styles.walletAddress, { color: colors.secondaryText }]}>
+                  {formatAddress(walletAddress)}
+                </Text>
+              </TouchableOpacity>
               <TouchableOpacity 
                 style={[styles.copyButton, { backgroundColor: colors.buttonBg }]}
                 onPress={copyAddress}

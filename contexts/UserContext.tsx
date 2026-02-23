@@ -59,11 +59,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const connectWallet = async (address: string) => {
     try {
+      console.log('UserContext: Connecting wallet with address:', address);
+      console.log('UserContext: Address length:', address.length);
+      
       // Save to local storage
       await AsyncStorage.setItem(WALLET_KEY, address);
       setWalletAddress(address);
+      console.log('UserContext: Saved to AsyncStorage');
 
       // Save to database
+      console.log('UserContext: Calling API to save to database...');
       const response = await fetch(`${API_URL}/users/connect-wallet`, {
         method: 'POST',
         headers: {
@@ -74,12 +79,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         }),
       });
 
+      console.log('UserContext: API response status:', response.status);
+      
       if (response.ok) {
         const userData = await response.json();
+        console.log('UserContext: User data from API:', userData);
         setUser(userData);
         console.log('Wallet connected and saved to database');
       } else {
-        console.error('Failed to save wallet to database');
+        const errorText = await response.text();
+        console.error('Failed to save wallet to database:', errorText);
       }
     } catch (error) {
       console.error('Error connecting wallet:', error);
