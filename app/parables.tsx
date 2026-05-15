@@ -1,10 +1,12 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
-import { fetchVerse, VerseResult } from '@/utils/verse-search';
+import { useUser } from '@/contexts/UserContext';
+import { API_URL } from '@/utils/api-config';
+import { fetchBibleStoriesVerse, VerseRangeResult } from '@/utils/verse-search';
 import * as Clipboard from 'expo-clipboard';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 const RAPIDAPI_KEY = process.env.EXPO_PUBLIC_RAPIDAPI_KEY;
 const RAPIDAPI_HOST = process.env.EXPO_PUBLIC_RAPIDAPI_HOST;
@@ -16,12 +18,14 @@ type Parables = {
 export default function ParablesScreen() {
   const { colors } = useTheme();
   const router = useRouter();
+  const { walletAddress } = useUser();
   
   const [parables, setParables] = useState<Parables>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedVerse, setSelectedVerse] = useState<VerseResult | null>(null);
+  const [selectedVerse, setSelectedVerse] = useState<VerseRangeResult | null>(null);
   const [loadingVerse, setLoadingVerse] = useState(false);
+  const [savingVerse, setSavingVerse] = useState(false);
 
   useEffect(() => {
     fetchParables();
@@ -58,15 +62,18 @@ export default function ParablesScreen() {
   };
 
   const handleReferenceClick = async (reference: string) => {
+    console.log('Reference clicked:', reference);
     setLoadingVerse(true);
     try {
-      const verse = await fetchVerse(reference, RAPIDAPI_KEY!, RAPIDAPI_HOST!);
+      const verse = await fetchBibleStoriesVerse(reference, RAPIDAPI_KEY!, RAPIDAPI_HOST!);
+      console.log('Verse result:', verse);
       if (verse) {
         setSelectedVerse(verse);
       } else {
-        Alert.alert('Error', 'Failed to load verse');
+        Alert.alert('Error', `Failed to load verse: ${reference}`);
       }
     } catch (err) {
+      console.error('Error loading verse:', err);
       Alert.alert('Error', 'Failed to load verse');
     } finally {
       setLoadingVerse(false);
@@ -77,10 +84,67 @@ export default function ParablesScreen() {
     if (!selectedVerse) return;
     
     const bookName = selectedVerse.book.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-    const text = `"${selectedVerse.text}"\n\n— ${bookName} ${selectedVerse.chapter}:${selectedVerse.verse}`;
+    const text = `"${selectedVerse.text}"\n\n— ${bookName} ${selectedVerse.startChapter}:${selectedVerse.verses}`;
     
     await Clipboard.setStringAsync(text);
     Alert.alert('Copied', 'Verse copied to clipboard');
+  };
+
+  const saveVerse = async () => {
+    if (!selectedVerse || !walletAddress) {
+      Alert.alert('Error', 'Please connect your wallet to save verses');
+      return;
+    }
+
+    setSavingVerse(true);
+    try {
+      const bookName = selectedVerse.book.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      const response = await fetch(`${API_URL}/users/${walletAddress}/saved-verses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bookName: bookName,
+          chapterNumber: parseInt(selectedVerse.startChapter),
+          verseNumber: parseInt(selectedVerse.verses.split('-')[0]),
+          verseText: selectedVerse.text,
+        }),
+      });
+
+      if (response.status === 409) {
+        Alert.alert('Already Saved', 'This verse is already in your saved collection.');
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to save verse');
+      }
+
+      Alert.alert('Saved!', 'Verse saved successfully.');
+    } catch (error) {
+      console.error('Error saving verse:', error);
+      Alert.alert('Error', 'Failed to save verse. Please try again.');
+    } finally {
+      setSavingVerse(false);
+    }
+  };
+
+  const shareVerse = async () => {
+    if (!selectedVerse) return;
+
+    try {
+      const bookName = selectedVerse.book.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      const message = `"${selectedVerse.text}"\n\n— ${bookName} ${selectedVerse.startChapter}:${selectedVerse.verses}`;
+      
+      await Share.share({
+        message: message,
+        title: `${bookName} ${selectedVerse.startChapter}:${selectedVerse.verses}`,
+      });
+    } catch (error) {
+      console.error('Error sharing verse:', error);
+      Alert.alert('Error', 'Failed to share verse');
+    }
   };
 
   const renderContent = () => {
@@ -210,7 +274,7 @@ export default function ParablesScreen() {
                 <>
                   <View style={styles.modalHeader}>
                     <Text style={[styles.modalReference, { color: colors.primary }]}>
-                      {selectedVerse.book.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')} {selectedVerse.chapter}:{selectedVerse.verse}
+                      {selectedVerse && `${selectedVerse.book.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')} ${selectedVerse.startChapter}:${selectedVerse.verses}`}
                     </Text>
                     <TouchableOpacity onPress={() => setSelectedVerse(null)}>
                       <IconSymbol name="xmark.circle.fill" size={28} color={colors.tertiaryText} />
@@ -222,15 +286,27 @@ export default function ParablesScreen() {
                   </ScrollView>
                   
                   <View style={styles.modalActions}>
-                    <TouchableOpacity style={[styles.modalButton, { backgroundColor: colors.buttonBg }]}>
+                    <TouchableOpacity 
+                      style={[styles.modalButton, { backgroundColor: colors.buttonBg }]}
+                      onPress={saveVerse}
+                      disabled={savingVerse}
+                    >
                       <IconSymbol name="heart" size={18} color={colors.primary} />
-                      <Text style={[styles.modalButtonText, { color: colors.primary }]}>Save</Text>
+                      <Text style={[styles.modalButtonText, { color: colors.primary }]}>
+                        {savingVerse ? 'Saving...' : 'Save'}
+                      </Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.modalButton, { backgroundColor: colors.buttonBg }]}>
+                    <TouchableOpacity 
+                      style={[styles.modalButton, { backgroundColor: colors.buttonBg }]}
+                      onPress={shareVerse}
+                    >
                       <IconSymbol name="square.and.arrow.up" size={18} color={colors.primary} />
                       <Text style={[styles.modalButtonText, { color: colors.primary }]}>Share</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.modalButton, { backgroundColor: colors.buttonBg }]} onPress={copyToClipboard}>
+                    <TouchableOpacity 
+                      style={[styles.modalButton, { backgroundColor: colors.buttonBg }]} 
+                      onPress={copyToClipboard}
+                    >
                       <IconSymbol name="doc.on.doc" size={18} color={colors.primary} />
                       <Text style={[styles.modalButtonText, { color: colors.primary }]}>Copy</Text>
                     </TouchableOpacity>

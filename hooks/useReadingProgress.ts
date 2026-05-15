@@ -1,3 +1,4 @@
+import { useUser } from '@/contexts/UserContext';
 import {
     ChapterProgress,
     completeChapter,
@@ -13,13 +14,14 @@ import {
 import { useEffect, useState } from 'react';
 
 export const useReadingProgress = (planId: string | null) => {
+  const { walletAddress } = useUser();
   const [progress, setProgress] = useState<ChapterProgress[]>([]);
   const [stats, setStats] = useState<PlanStats | null>(null);
   const [streak, setStreak] = useState<ReadingStreak | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadProgress = async () => {
-    if (!planId) {
+    if (!planId || !walletAddress) {
       setLoading(false);
       return;
     }
@@ -27,9 +29,9 @@ export const useReadingProgress = (planId: string | null) => {
     setLoading(true);
     try {
       const [progressData, statsData, streakData] = await Promise.all([
-        getPlanProgress(planId),
-        getPlanStats(planId),
-        getReadingStreak(planId),
+        getPlanProgress(walletAddress, planId),
+        getPlanStats(walletAddress, planId),
+        getReadingStreak(walletAddress, planId),
       ]);
 
       setProgress(progressData);
@@ -44,7 +46,7 @@ export const useReadingProgress = (planId: string | null) => {
 
   useEffect(() => {
     loadProgress();
-  }, [planId]);
+  }, [planId, walletAddress]);
 
   const startChapter = async (chapterData: {
     chapterId: string;
@@ -53,8 +55,8 @@ export const useReadingProgress = (planId: string | null) => {
     chapterNumber: number;
     dayNumber: number;
   }) => {
-    if (!planId) return;
-    await startReadingChapter(planId, chapterData);
+    if (!planId || !walletAddress) return;
+    await startReadingChapter(walletAddress, planId, chapterData);
     await loadProgress();
   };
 
@@ -67,8 +69,8 @@ export const useReadingProgress = (planId: string | null) => {
     progressPercentage: number;
     lastPosition: number;
   }) => {
-    if (!planId) return;
-    await updateReadingPosition(planId, chapterData);
+    if (!planId || !walletAddress) return;
+    await updateReadingPosition(walletAddress, planId, chapterData);
   };
 
   const finishChapter = async (chapterData: {
@@ -78,14 +80,14 @@ export const useReadingProgress = (planId: string | null) => {
     chapterNumber: number;
     dayNumber: number;
   }) => {
-    if (!planId) return;
-    await completeChapter(planId, chapterData);
+    if (!planId || !walletAddress) return;
+    await completeChapter(walletAddress, planId, chapterData);
     await loadProgress();
   };
 
   const getDayChapters = async (dayNumber: number) => {
-    if (!planId) return [];
-    return await getDayProgress(planId, dayNumber);
+    if (!planId || !walletAddress) return [];
+    return await getDayProgress(walletAddress, planId, dayNumber);
   };
 
   const isChapterCompleted = (chapterId: string): boolean => {

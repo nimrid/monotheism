@@ -53,6 +53,7 @@ const initDB = async () => {
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       wallet_address VARCHAR(255) UNIQUE NOT NULL,
+      trial_plans_used INTEGER DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -67,6 +68,8 @@ const initDB = async () => {
       start_date DATE NOT NULL,
       age INTEGER NOT NULL,
       status VARCHAR(50) DEFAULT 'active',
+      is_trial BOOLEAN DEFAULT false,
+      payment_tx_signature VARCHAR(255),
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -130,6 +133,18 @@ const initDB = async () => {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Reading Plan Payments Table
+    CREATE TABLE IF NOT EXISTS reading_plan_payments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      plan_id UUID REFERENCES reading_plans(id) ON DELETE CASCADE,
+      amount_skr DECIMAL(10, 2) NOT NULL,
+      tx_signature VARCHAR(255) UNIQUE NOT NULL,
+      status VARCHAR(50) DEFAULT 'pending',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      confirmed_at TIMESTAMP
+    );
+
     -- Create indexes for better query performance
     CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address);
     CREATE INDEX IF NOT EXISTS idx_reading_plans_user_id ON reading_plans(user_id);
@@ -141,6 +156,8 @@ const initDB = async () => {
     CREATE INDEX IF NOT EXISTS idx_reading_sessions_date ON reading_sessions(session_date);
     CREATE INDEX IF NOT EXISTS idx_saved_verses_user_id ON saved_verses(user_id);
     CREATE INDEX IF NOT EXISTS idx_definition_searches_user_id ON definition_searches(user_id);
+    CREATE INDEX IF NOT EXISTS idx_reading_plan_payments_user_id ON reading_plan_payments(user_id);
+    CREATE INDEX IF NOT EXISTS idx_reading_plan_payments_plan_id ON reading_plan_payments(plan_id);
   `;
   
   try {
@@ -363,15 +380,31 @@ app.delete('/api/users/:walletAddress/saved-verses/:verseId', async (req, res) =
   }
 });
 
-// Get all reading plans
-app.get('/api/reading-plans', async (req, res) => {
+// Get all reading plans for a user
+app.get('/api/users/:walletAddress/reading-plans', async (req, res) => {
   try {
+    const { walletAddress } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
     const result = await pool.query(
-      'SELECT * FROM reading_plans ORDER BY created_at DESC'
+      'SELECT * FROM reading_plans WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
     );
     
     const plans = result.rows.map(row => ({
       id: row.id,
+      userId: row.user_id,
       name: row.name,
       days: row.days,
       startDate: row.start_date,
@@ -388,12 +421,25 @@ app.get('/api/reading-plans', async (req, res) => {
 });
 
 // Get a specific reading plan
-app.get('/api/reading-plans/:id', async (req, res) => {
+app.get('/api/users/:walletAddress/reading-plans/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const { walletAddress, id } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
     const result = await pool.query(
-      'SELECT * FROM reading_plans WHERE id = $1',
-      [id]
+      'SELECT * FROM reading_plans WHERE id = $1 AND user_id = $2',
+      [id, userId]
     );
     
     if (result.rows.length === 0) {
@@ -403,6 +449,7 @@ app.get('/api/reading-plans/:id', async (req, res) => {
     const row = result.rows[0];
     const plan = {
       id: row.id,
+      userId: row.user_id,
       name: row.name,
       days: row.days,
       startDate: row.start_date,
@@ -418,34 +465,118 @@ app.get('/api/reading-plans/:id', async (req, res) => {
   }
 });
 
-// Create a new reading plan
-app.post('/api/reading-plans', async (req, res) => {
+// Check trial status and get plan creation cost
+app.get('/api/users/:walletAddress/reading-plans/trial-status', async (req, res) => {
   try {
-    const { name, days, startDate, age } = req.body;
+    const { walletAddress } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id, trial_plans_used FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const user = userResult.rows[0];
+    const trialsRemaining = Math.max(0, 2 - user.trial_plans_used);
+    const isTrialAvailable = trialsRemaining > 0;
+    
+    res.json({
+      trialsUsed: user.trial_plans_used,
+      trialsRemaining,
+      isTrialAvailable,
+      costPerDay: 10, // 10 SKR per day
+    });
+  } catch (error) {
+    console.error('Error checking trial status:', error);
+    res.status(500).json({ error: 'Failed to check trial status' });
+  }
+});
+
+// Create a new reading plan (with trial or payment)
+app.post('/api/users/:walletAddress/reading-plans', async (req, res) => {
+  try {
+    const { walletAddress } = req.params;
+    const { name, days, startDate, age, paymentTxSignature } = req.body;
     
     if (!name || !days || !startDate || !age) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     
-    const result = await pool.query(
-      `INSERT INTO reading_plans (name, days, start_date, age, status)
-       VALUES ($1, $2, $3, $4, 'active')
-       RETURNING *`,
-      [name, days, startDate, age]
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id, trial_plans_used FROM users WHERE wallet_address = $1',
+      [walletAddress]
     );
     
-    const row = result.rows[0];
-    const plan = {
-      id: row.id,
-      name: row.name,
-      days: row.days,
-      startDate: row.start_date,
-      age: row.age,
-      status: row.status,
-      createdAt: row.created_at,
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    const trialsUsed = userResult.rows[0].trial_plans_used;
+    const trialsRemaining = Math.max(0, 2 - trialsUsed);
+    const isTrialAvailable = trialsRemaining > 0;
+    
+    // Calculate cost
+    const costPerDay = 10; // 10 SKR per day
+    const totalCost = days * costPerDay;
+    
+    // Check if user needs to pay
+    if (!isTrialAvailable && !paymentTxSignature) {
+      return res.status(402).json({ 
+        error: 'Payment required',
+        costSkr: totalCost,
+        costPerDay,
+        days,
+        message: `This plan costs ${totalCost} SKR (${costPerDay} SKR per day)`
+      });
+    }
+    
+    // Create the reading plan
+    const planResult = await pool.query(
+      `INSERT INTO reading_plans (user_id, name, days, start_date, age, status, is_trial, payment_tx_signature)
+       VALUES ($1, $2, $3, $4, $5, 'active', $6, $7)
+       RETURNING *`,
+      [userId, name, days, startDate, age, isTrialAvailable, paymentTxSignature || null]
+    );
+    
+    const plan = planResult.rows[0];
+    
+    // If using trial, increment trial counter
+    if (isTrialAvailable) {
+      await pool.query(
+        'UPDATE users SET trial_plans_used = trial_plans_used + 1 WHERE id = $1',
+        [userId]
+      );
+    }
+    
+    // If payment was made, record it
+    if (paymentTxSignature) {
+      await pool.query(
+        `INSERT INTO reading_plan_payments (user_id, plan_id, amount_skr, tx_signature, status)
+         VALUES ($1, $2, $3, $4, 'confirmed')`,
+        [userId, plan.id, totalCost, paymentTxSignature]
+      );
+    }
+    
+    const response = {
+      id: plan.id,
+      userId: plan.user_id,
+      name: plan.name,
+      days: plan.days,
+      startDate: plan.start_date,
+      age: plan.age,
+      status: plan.status,
+      isTrial: plan.is_trial,
+      costSkr: isTrialAvailable ? 0 : totalCost,
+      createdAt: plan.created_at,
     };
     
-    res.status(201).json(plan);
+    res.status(201).json(response);
   } catch (error) {
     console.error('Error creating reading plan:', error);
     res.status(500).json({ error: 'Failed to create reading plan' });
@@ -453,21 +584,33 @@ app.post('/api/reading-plans', async (req, res) => {
 });
 
 // Update reading plan status
-app.patch('/api/reading-plans/:id/status', async (req, res) => {
+app.patch('/api/users/:walletAddress/reading-plans/:id/status', async (req, res) => {
   try {
-    const { id } = req.params;
+    const { walletAddress, id } = req.params;
     const { status } = req.body;
     
     if (!status || !['active', 'completed', 'archived'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
     
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
     const result = await pool.query(
       `UPDATE reading_plans 
        SET status = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2
+       WHERE id = $2 AND user_id = $3
        RETURNING *`,
-      [status, id]
+      [status, id, userId]
     );
     
     if (result.rows.length === 0) {
@@ -482,12 +625,25 @@ app.patch('/api/reading-plans/:id/status', async (req, res) => {
 });
 
 // Delete a reading plan
-app.delete('/api/reading-plans/:id', async (req, res) => {
+app.delete('/api/users/:walletAddress/reading-plans/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const { walletAddress, id } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
     const result = await pool.query(
-      'DELETE FROM reading_plans WHERE id = $1 RETURNING *',
-      [id]
+      'DELETE FROM reading_plans WHERE id = $1 AND user_id = $2 RETURNING *',
+      [id, userId]
     );
     
     if (result.rows.length === 0) {
@@ -506,19 +662,42 @@ app.delete('/api/reading-plans/:id', async (req, res) => {
 // ============================================
 
 // Get all progress for a reading plan
-app.get('/api/reading-plans/:planId/progress', async (req, res) => {
+app.get('/api/users/:walletAddress/reading-plans/:planId/progress', async (req, res) => {
   try {
-    const { planId } = req.params;
+    const { walletAddress, planId } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
+    // Verify plan belongs to user
+    const planResult = await pool.query(
+      'SELECT id FROM reading_plans WHERE id = $1 AND user_id = $2',
+      [planId, userId]
+    );
+    
+    if (planResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Reading plan not found' });
+    }
     
     const result = await pool.query(
       `SELECT * FROM reading_progress 
-       WHERE plan_id = $1 
+       WHERE plan_id = $1 AND user_id = $2
        ORDER BY day_number, chapter_number`,
-      [planId]
+      [planId, userId]
     );
     
     const progress = result.rows.map(row => ({
       id: row.id,
+      userId: row.user_id,
       planId: row.plan_id,
       chapterId: row.chapter_id,
       bookName: row.book_name,
@@ -540,9 +719,9 @@ app.get('/api/reading-plans/:planId/progress', async (req, res) => {
 });
 
 // Update chapter progress
-app.post('/api/reading-plans/:planId/progress', async (req, res) => {
+app.post('/api/users/:walletAddress/reading-plans/:planId/progress', async (req, res) => {
   try {
-    const { planId } = req.params;
+    const { walletAddress, planId } = req.params;
     const { 
       chapterId, 
       bookName, 
@@ -554,30 +733,53 @@ app.post('/api/reading-plans/:planId/progress', async (req, res) => {
       completed 
     } = req.body;
     
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
+    // Verify plan belongs to user
+    const planResult = await pool.query(
+      'SELECT id FROM reading_plans WHERE id = $1 AND user_id = $2',
+      [planId, userId]
+    );
+    
+    if (planResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Reading plan not found' });
+    }
+    
     // Upsert progress
     const result = await pool.query(
       `INSERT INTO reading_progress 
-        (plan_id, chapter_id, book_name, book_id, chapter_number, day_number, 
+        (user_id, plan_id, chapter_id, book_name, book_id, chapter_number, day_number, 
          progress_percentage, last_position, completed, started_at, completed_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 
-         COALESCE((SELECT started_at FROM reading_progress WHERE plan_id = $1 AND chapter_id = $2), CURRENT_TIMESTAMP),
-         CASE WHEN $9 = true THEN CURRENT_TIMESTAMP ELSE NULL END,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
+         COALESCE((SELECT started_at FROM reading_progress WHERE plan_id = $2 AND chapter_id = $3), CURRENT_TIMESTAMP),
+         CASE WHEN $10 = true THEN CURRENT_TIMESTAMP ELSE NULL END,
          CURRENT_TIMESTAMP)
        ON CONFLICT (plan_id, chapter_id) 
        DO UPDATE SET
-         progress_percentage = $7,
-         last_position = $8,
-         completed = $9,
-         completed_at = CASE WHEN $9 = true THEN CURRENT_TIMESTAMP ELSE reading_progress.completed_at END,
+         progress_percentage = $8,
+         last_position = $9,
+         completed = $10,
+         completed_at = CASE WHEN $10 = true THEN CURRENT_TIMESTAMP ELSE reading_progress.completed_at END,
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
-      [planId, chapterId, bookName, bookId, chapterNumber, dayNumber, 
+      [userId, planId, chapterId, bookName, bookId, chapterNumber, dayNumber, 
        progressPercentage, lastPosition, completed]
     );
     
     const row = result.rows[0];
     const progress = {
       id: row.id,
+      userId: row.user_id,
       planId: row.plan_id,
       chapterId: row.chapter_id,
       bookName: row.book_name,
@@ -599,19 +801,42 @@ app.post('/api/reading-plans/:planId/progress', async (req, res) => {
 });
 
 // Get progress for a specific day
-app.get('/api/reading-plans/:planId/progress/day/:dayNumber', async (req, res) => {
+app.get('/api/users/:walletAddress/reading-plans/:planId/progress/day/:dayNumber', async (req, res) => {
   try {
-    const { planId, dayNumber } = req.params;
+    const { walletAddress, planId, dayNumber } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
+    // Verify plan belongs to user
+    const planResult = await pool.query(
+      'SELECT id FROM reading_plans WHERE id = $1 AND user_id = $2',
+      [planId, userId]
+    );
+    
+    if (planResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Reading plan not found' });
+    }
     
     const result = await pool.query(
       `SELECT * FROM reading_progress 
-       WHERE plan_id = $1 AND day_number = $2
+       WHERE plan_id = $1 AND user_id = $2 AND day_number = $3
        ORDER BY chapter_number`,
-      [planId, dayNumber]
+      [planId, userId, dayNumber]
     );
     
     const progress = result.rows.map(row => ({
       id: row.id,
+      userId: row.user_id,
       planId: row.plan_id,
       chapterId: row.chapter_id,
       bookName: row.book_name,
@@ -633,9 +858,31 @@ app.get('/api/reading-plans/:planId/progress/day/:dayNumber', async (req, res) =
 });
 
 // Get overall plan statistics
-app.get('/api/reading-plans/:planId/stats', async (req, res) => {
+app.get('/api/users/:walletAddress/reading-plans/:planId/stats', async (req, res) => {
   try {
-    const { planId } = req.params;
+    const { walletAddress, planId } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
+    // Verify plan belongs to user
+    const planResult = await pool.query(
+      'SELECT id FROM reading_plans WHERE id = $1 AND user_id = $2',
+      [planId, userId]
+    );
+    
+    if (planResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Reading plan not found' });
+    }
     
     const result = await pool.query(
       `SELECT 
@@ -646,8 +893,8 @@ app.get('/api/reading-plans/:planId/stats', async (req, res) => {
          AVG(progress_percentage) as avg_progress,
          MAX(day_number) FILTER (WHERE completed = true) as last_completed_day
        FROM reading_progress
-       WHERE plan_id = $1`,
-      [planId]
+       WHERE plan_id = $1 AND user_id = $2`,
+      [planId, userId]
     );
     
     const stats = result.rows[0];
@@ -670,9 +917,31 @@ app.get('/api/reading-plans/:planId/stats', async (req, res) => {
 });
 
 // Mark chapter as completed
-app.patch('/api/reading-plans/:planId/progress/:chapterId/complete', async (req, res) => {
+app.patch('/api/users/:walletAddress/reading-plans/:planId/progress/:chapterId/complete', async (req, res) => {
   try {
-    const { planId, chapterId } = req.params;
+    const { walletAddress, planId, chapterId } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
+    // Verify plan belongs to user
+    const planResult = await pool.query(
+      'SELECT id FROM reading_plans WHERE id = $1 AND user_id = $2',
+      [planId, userId]
+    );
+    
+    if (planResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Reading plan not found' });
+    }
     
     const result = await pool.query(
       `UPDATE reading_progress 
@@ -680,9 +949,9 @@ app.patch('/api/reading-plans/:planId/progress/:chapterId/complete', async (req,
            progress_percentage = 100,
            completed_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
-       WHERE plan_id = $1 AND chapter_id = $2
+       WHERE plan_id = $1 AND chapter_id = $2 AND user_id = $3
        RETURNING *`,
-      [planId, chapterId]
+      [planId, chapterId, userId]
     );
     
     if (result.rows.length === 0) {
@@ -697,9 +966,31 @@ app.patch('/api/reading-plans/:planId/progress/:chapterId/complete', async (req,
 });
 
 // Get reading streak
-app.get('/api/reading-plans/:planId/streak', async (req, res) => {
+app.get('/api/users/:walletAddress/reading-plans/:planId/streak', async (req, res) => {
   try {
-    const { planId } = req.params;
+    const { walletAddress, planId } = req.params;
+    
+    // Get user ID from wallet address
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE wallet_address = $1',
+      [walletAddress]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
+    // Verify plan belongs to user
+    const planResult = await pool.query(
+      'SELECT id FROM reading_plans WHERE id = $1 AND user_id = $2',
+      [planId, userId]
+    );
+    
+    if (planResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Reading plan not found' });
+    }
     
     // Get all days with completed chapters, grouped by day
     const result = await pool.query(
@@ -708,10 +999,10 @@ app.get('/api/reading-plans/:planId/streak', async (req, res) => {
          DATE(completed_at) as completion_date,
          COUNT(*) as chapters_completed
        FROM reading_progress
-       WHERE plan_id = $1 AND completed = true
+       WHERE plan_id = $1 AND user_id = $2 AND completed = true
        GROUP BY day_number, DATE(completed_at)
        ORDER BY day_number DESC`,
-      [planId]
+      [planId, userId]
     );
     
     const completedDays = result.rows;

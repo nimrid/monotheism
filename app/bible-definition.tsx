@@ -1,7 +1,8 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
-import { PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
-import { useMobileWallet } from '@wallet-ui/react-native-web3js';
+import { fetchBibleStoriesVerse, VerseRangeResult } from '@/utils/verse-search';
+import { createTransferInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
+import { PublicKey, Transaction } from '@solana/web3.js';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
@@ -15,31 +16,45 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 
+const RAPIDAPI_KEY = process.env.EXPO_PUBLIC_RAPIDAPI_KEY;
+const RAPIDAPI_HOST = process.env.EXPO_PUBLIC_RAPIDAPI_HOST;
 const RECIPIENT_WALLET = 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
-const SEARCH_COST_LAMPORTS = 2000000; // 0.002 SOL (devnet)
+const SKR_MINT = 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3';
+const SEARCH_COST_SKR = 35; // 35 SKR token
 
 type DefinitionResult = {
   word: string;
   definition: string;
 };
 
+type SearchResult = DefinitionResult | VerseRangeResult;
+
 export default function BibleDefinitionScreen() {
   const { colors } = useTheme();
   const router = useRouter();
-  const { account, signAndSendTransaction, connection } = useMobileWallet();
+  const [walletNotAvailable] = useState(true); // Wallet is not available in dev build
   const [query, setQuery] = useState('');
-  const [result, setResult] = useState<DefinitionResult | null>(null);
+  const [result, setResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
+  const [isVerseResult, setIsVerseResult] = useState(false);
   const fadeAnim = useState(new Animated.Value(0))[0];
 
   const handlePayAndSearch = async () => {
       if (!query.trim()) return;
+
+      if (walletNotAvailable) {
+        Alert.alert(
+          'Wallet Not Available',
+          'The Solana wallet adapter is not available in this build. Please rebuild the development build with native modules linked.'
+        );
+        return;
+      }
 
       // Check if wallet is connected
       if (!account?.address) {
@@ -58,27 +73,39 @@ export default function BibleDefinitionScreen() {
       setError(null);
 
       try {
-        console.log('Creating payment transaction...');
+        console.log('Creating SKR token payment transaction...');
         console.log('From:', account.address.toBase58());
         console.log('To:', RECIPIENT_WALLET);
-        console.log('Amount:', SEARCH_COST_LAMPORTS, 'lamports (0.002 SOL)');
+        console.log('Amount:', SEARCH_COST_SKR, 'SKR tokens');
 
         // Get latest blockhash with context
         const { context, value: { blockhash } } = await connection.getLatestBlockhashAndContext();
 
-        // Create transaction
+        // Get associated token accounts
+        const senderTokenAccount = await getAssociatedTokenAddress(
+          new PublicKey(SKR_MINT),
+          account.address
+        );
+
+        const recipientTokenAccount = await getAssociatedTokenAddress(
+          new PublicKey(SKR_MINT),
+          new PublicKey(RECIPIENT_WALLET)
+        );
+
+        // Create transaction with SPL token transfer
         const transaction = new Transaction({
           recentBlockhash: blockhash,
           feePayer: account.address,
         }).add(
-          SystemProgram.transfer({
-            fromPubkey: account.address,
-            toPubkey: new PublicKey(RECIPIENT_WALLET),
-            lamports: SEARCH_COST_LAMPORTS,
-          })
+          createTransferInstruction(
+            senderTokenAccount,
+            recipientTokenAccount,
+            account.address,
+            SEARCH_COST_SKR * Math.pow(10, 6) // Assuming 6 decimals for SKR token
+          )
         );
 
-        console.log('Sending transaction...');
+        console.log('Sending SKR token transfer transaction...');
 
         // Sign and send transaction using useMobileWallet
         // minContextSlot ensures the transaction is processed after this slot
@@ -99,7 +126,7 @@ export default function BibleDefinitionScreen() {
         setError('Payment failed. Please try again.');
         Alert.alert(
           'Payment Failed',
-          error.message || 'Unable to process payment. Make sure you have enough SOL in your wallet and are connected to devnet.'
+          error.message || 'Unable to process payment. Make sure you have enough SKR tokens in your wallet and are connected to Solana mainnet.'
         );
       } finally {
         setPaying(false);
@@ -112,8 +139,39 @@ export default function BibleDefinitionScreen() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setIsVerseResult(false);
 
     try {
+      // Check if input looks like a verse reference (e.g., "Genesis 1:4-15" or "John 3:16")
+      const versePattern = /^[a-zA-Z\s\d]+\s+\d+:\d+(?:-\d+)?$/i;
+      
+      if (versePattern.test(query.trim())) {
+        // Try to fetch as verse
+        console.log('Detected verse reference:', query);
+        const verseResult = await fetchBibleStoriesVerse(query, RAPIDAPI_KEY!, RAPIDAPI_HOST!);
+        
+        if (verseResult) {
+          setResult(verseResult);
+          setIsVerseResult(true);
+          
+          // Add to search history
+          setSearchHistory(prev => {
+            const newHistory = [query, ...prev.filter(item => item !== query)].slice(0, 5);
+            return newHistory;
+          });
+
+          // Animate result appearance
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 600,
+            useNativeDriver: true,
+          }).start();
+          
+          return;
+        }
+      }
+
+      // If not a verse or verse fetch failed, try definition search
       const response = await fetch(
         `https://iq-bible.p.rapidapi.com/GetDefinitionBiblical?query=${encodeURIComponent(query)}&dictionaryId=smiths`,
         {
@@ -133,6 +191,7 @@ export default function BibleDefinitionScreen() {
       
       if (data.word && data.definition) {
         setResult(data);
+        setIsVerseResult(false);
         
         // Add to search history
         setSearchHistory(prev => {
@@ -147,7 +206,7 @@ export default function BibleDefinitionScreen() {
           useNativeDriver: true,
         }).start();
       } else {
-        setError('No definition found for this term');
+        setError('No definition or verse found for this term');
       }
     } catch (err) {
       setError('Unable to fetch definition. Please try again.');
@@ -208,7 +267,7 @@ export default function BibleDefinitionScreen() {
           {/* Payment Info */}
           <View style={styles.paymentInfo}>
             <Text style={styles.paymentInfoText}>
-              💰 0.002 SOL per search (Devnet)
+              💰 35 SKR token per search
             </Text>
           </View>
 
@@ -280,32 +339,69 @@ export default function BibleDefinitionScreen() {
         {result && (
           <Animated.View style={[styles.resultContainer, { opacity: fadeAnim }]}>
             <View style={[styles.resultCard, { backgroundColor: colors.card }]}>
-              {/* Word Header */}
-              <View style={styles.wordHeader}>
-                <View style={[styles.wordBadge, { backgroundColor: colors.background }]}>
-                  <Text style={styles.wordBadgeText}>📚</Text>
-                </View>
-                <View style={styles.wordInfo}>
-                  <Text style={[styles.wordTitle, { color: colors.text }]}>{result.word}</Text>
-                  <Text style={[styles.wordSubtitle, { color: colors.secondaryText }]}>
-                    Smith's Bible Dictionary
-                  </Text>
-                </View>
-              </View>
+              {isVerseResult ? (
+                // Verse Result Display
+                <>
+                  {/* Verse Header */}
+                  <View style={styles.wordHeader}>
+                    <View style={[styles.wordBadge, { backgroundColor: colors.background }]}>
+                      <Text style={styles.wordBadgeText}>📖</Text>
+                    </View>
+                    <View style={styles.wordInfo}>
+                      <Text style={[styles.wordTitle, { color: colors.text }]}>
+                        {(result as VerseRangeResult).book.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')} {(result as VerseRangeResult).startChapter}:{(result as VerseRangeResult).verses}
+                      </Text>
+                      <Text style={[styles.wordSubtitle, { color: colors.secondaryText }]}>
+                        Bible Passage
+                      </Text>
+                    </View>
+                  </View>
 
-              {/* Divider */}
-              <View style={[styles.divider, { backgroundColor: colors.border }]} />
+                  {/* Divider */}
+                  <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
-              {/* Definition Content */}
-              <View style={styles.definitionContent}>
-                <View style={styles.definitionHeader}>
-                  <IconSymbol name="book.fill" size={18} color={colors.primary} />
-                  <Text style={[styles.definitionLabel, { color: colors.primary }]}>Definition</Text>
-                </View>
-                <Text style={[styles.definitionText, { color: colors.text }]}>
-                  {result.definition}
-                </Text>
-              </View>
+                  {/* Verse Content */}
+                  <View style={styles.definitionContent}>
+                    <View style={styles.definitionHeader}>
+                      <IconSymbol name="book.fill" size={18} color={colors.primary} />
+                      <Text style={[styles.definitionLabel, { color: colors.primary }]}>Passage</Text>
+                    </View>
+                    <Text style={[styles.definitionText, { color: colors.text }]}>
+                      {(result as VerseRangeResult).text}
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                // Definition Result Display
+                <>
+                  {/* Word Header */}
+                  <View style={styles.wordHeader}>
+                    <View style={[styles.wordBadge, { backgroundColor: colors.background }]}>
+                      <Text style={styles.wordBadgeText}>📚</Text>
+                    </View>
+                    <View style={styles.wordInfo}>
+                      <Text style={[styles.wordTitle, { color: colors.text }]}>{(result as DefinitionResult).word}</Text>
+                      <Text style={[styles.wordSubtitle, { color: colors.secondaryText }]}>
+                        Smith's Bible Dictionary
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Divider */}
+                  <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+                  {/* Definition Content */}
+                  <View style={styles.definitionContent}>
+                    <View style={styles.definitionHeader}>
+                      <IconSymbol name="book.fill" size={18} color={colors.primary} />
+                      <Text style={[styles.definitionLabel, { color: colors.primary }]}>Definition</Text>
+                    </View>
+                    <Text style={[styles.definitionText, { color: colors.text }]}>
+                      {(result as DefinitionResult).definition}
+                    </Text>
+                  </View>
+                </>
+              )}
 
               {/* Action Buttons */}
               <View style={styles.actionRow}>
@@ -356,7 +452,7 @@ export default function BibleDefinitionScreen() {
                 Smith's Bible Dictionary provides detailed definitions of biblical terms, names, places, and concepts to enhance your understanding of Scripture.
               </Text>
               <Text style={[styles.infoText, { color: colors.secondaryText, marginTop: 8 }]}>
-                Each search costs 0.002 SOL on Devnet. Connect your wallet to get started.
+                Each search costs 35 SKR token on Solana Mainnet. Connect your wallet to get started.
               </Text>
             </View>
           </View>

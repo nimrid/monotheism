@@ -10,9 +10,12 @@ import {
     StyleSheet,
     Text,
     TouchableOpacity,
-    View,
+    View
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+
+const RECIPIENT_WALLET = 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
+const WATCH_VIDEO_COST = 5000000; // 0.005 SOL (devnet)
 
 type Sermon = {
   id: string;
@@ -114,7 +117,75 @@ const { width } = Dimensions.get('window');
 export default function HermeneuticsScreen() {
   const { colors } = useTheme();
   const router = useRouter();
+  const { account, signAndSendTransaction, connection } = useMobileWallet();
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
+  const [paying, setPaying] = useState(false);
+  const [payingVideoId, setPayingVideoId] = useState<string | null>(null);
+
+  const handlePayAndWatch = async (sermon: Sermon) => {
+    // Check if wallet is connected
+    if (!account?.address) {
+      Alert.alert(
+        'Wallet Required',
+        'Please connect your wallet to watch videos.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Go to Profile', onPress: () => router.push('/(tabs)/profile') },
+        ]
+      );
+      return;
+    }
+
+    setPaying(true);
+    setPayingVideoId(sermon.videoId);
+
+    try {
+      console.log('Processing payment for video:', sermon.title);
+      console.log('From:', account.address.toBase58());
+      console.log('To:', RECIPIENT_WALLET);
+      console.log('Amount:', WATCH_VIDEO_COST, 'lamports (0.005 SOL)');
+
+      // Get latest blockhash with context
+      const { context, value: { blockhash } } = await connection.getLatestBlockhashAndContext();
+
+      // Create transaction
+      const transaction = new Transaction({
+        recentBlockhash: blockhash,
+        feePayer: account.address,
+      }).add(
+        SystemProgram.transfer({
+          fromPubkey: account.address,
+          toPubkey: new PublicKey(RECIPIENT_WALLET),
+          lamports: WATCH_VIDEO_COST,
+        })
+      );
+
+      console.log('Sending transaction...');
+
+      // Sign and send transaction
+      const signature = await signAndSendTransaction(transaction, context.slot);
+
+      console.log('Payment transaction signature:', signature);
+      console.log('Payment confirmed, opening video');
+
+      // Payment successful, open video
+      openVideo(sermon.videoId);
+    } catch (error: any) {
+      console.error('Payment failed:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      });
+      Alert.alert(
+        'Payment Failed',
+        error.message || 'Unable to process payment. Make sure you have enough SOL in your wallet and are connected to devnet.'
+      );
+    } finally {
+      setPaying(false);
+      setPayingVideoId(null);
+    }
+  };
 
   const openVideo = (videoId: string) => {
     setSelectedVideo(videoId);
@@ -139,10 +210,20 @@ export default function HermeneuticsScreen() {
 
       {/* Description */}
       <View style={[styles.descriptionCard, { backgroundColor: colors.card }]}>
-        <Text style={[styles.descriptionTitle, { color: colors.text }]}>Study & Learn</Text>
-        <Text style={[styles.descriptionText, { color: colors.secondaryText }]}>
-          Watch educational videos about biblical interpretation, context, and understanding Scripture.
-        </Text>
+        <View style={styles.descriptionHeader}>
+          <View style={styles.descriptionLeft}>
+            <Text style={[styles.descriptionTitle, { color: colors.text }]}>Study & Learn</Text>
+            <Text style={[styles.descriptionText, { color: colors.secondaryText }]}>
+              Watch educational videos about biblical interpretation, context, and understanding Scripture.
+            </Text>
+          </View>
+        </View>
+        <View style={[styles.pricingBadge, { backgroundColor: colors.background }]}>
+          <IconSymbol name="play.circle.fill" size={16} color={colors.primary} />
+          <Text style={[styles.pricingText, { color: colors.primary }]}>
+            0.005 SOL per video
+          </Text>
+        </View>
       </View>
 
       {/* Videos Grid */}
@@ -152,12 +233,22 @@ export default function HermeneuticsScreen() {
             <TouchableOpacity
               key={sermon.id}
               style={[styles.videoCard, { backgroundColor: colors.card }]}
-              onPress={() => openVideo(sermon.videoId)}
+              onPress={() => handlePayAndWatch(sermon)}
+              disabled={paying}
             >
               <View style={styles.thumbnailContainer}>
                 <Image source={{ uri: sermon.thumbnail }} style={styles.thumbnail} />
                 <View style={styles.playButton}>
-                  <IconSymbol name="play.fill" size={24} color="#fff" />
+                  {paying && payingVideoId === sermon.videoId ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <IconSymbol name="play.fill" size={24} color="#fff" />
+                  )}
+                </View>
+                {/* Price Badge */}
+                <View style={styles.priceBadge}>
+                  <IconSymbol name="creditcard.fill" size={12} color="#fff" />
+                  <Text style={styles.priceText}>0.005 SOL</Text>
                 </View>
               </View>
               <View style={styles.videoInfo}>
@@ -275,6 +366,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
   },
+  descriptionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  descriptionLeft: {
+    flex: 1,
+  },
   descriptionTitle: {
     fontSize: 18,
     fontWeight: '600',
@@ -283,6 +383,18 @@ const styles = StyleSheet.create({
   descriptionText: {
     fontSize: 14,
     lineHeight: 20,
+  },
+  pricingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  pricingText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
@@ -327,6 +439,23 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 149, 0, 0.9)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  priceBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  priceText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
   },
   videoInfo: {
     padding: 16,

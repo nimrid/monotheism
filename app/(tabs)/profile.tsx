@@ -3,22 +3,24 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
 import { useReadingProgress } from '@/hooks/useReadingProgress';
 import { DayStreak, getDayStreak } from '@/utils/day-streak';
+import { fetchSKRBalance, TokenBalance } from '@/utils/token-balance';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
-import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function ProfileScreen() {
   const { isDarkMode, toggleTheme, colors } = useTheme();
   const router = useRouter();
   const { user, walletAddress, connectWallet: saveWallet, disconnectWallet: removeWallet } = useUser();
-  const { account, connect, disconnect } = useMobileWallet();
   const [connecting, setConnecting] = useState(false);
   const [activePlanId, setActivePlanId] = useState<string | null>(null);
   const [dayStreak, setDayStreak] = useState<DayStreak | null>(null);
+  const [walletNotAvailable] = useState(true); // Wallet is not available in dev build
+  const [skrBalance, setSkrBalance] = useState<TokenBalance | null>(null);
+  const [loadingBalance, setLoadingBalance] = useState(false);
 
   // Use progress tracking hook
   const { stats, streak, loading } = useReadingProgress(activePlanId);
@@ -28,25 +30,20 @@ export default function ProfileScreen() {
     loadDayStreak();
   }, []);
 
-  // Sync wallet address when account changes from useMobileWallet
   useEffect(() => {
-    const syncWallet = async () => {
-      if (account?.address) {
-        const addressString = account.address.toBase58();
-        if (addressString !== walletAddress) {
-          console.log('Syncing wallet address from useMobileWallet:', addressString);
-          await saveWallet(addressString);
-        }
-      }
-    };
-    syncWallet();
-  }, [account]);
+    if (walletAddress) {
+      loadSKRBalance();
+    }
+  }, [walletAddress]);
 
   useFocusEffect(
     React.useCallback(() => {
       loadActivePlanId();
       loadDayStreak();
-    }, [])
+      if (walletAddress) {
+        loadSKRBalance();
+      }
+    }, [walletAddress])
   );
 
   const loadDayStreak = async () => {
@@ -63,13 +60,37 @@ export default function ProfileScreen() {
     }
   };
 
+  const loadSKRBalance = async () => {
+    if (!walletAddress) return;
+    
+    setLoadingBalance(true);
+    try {
+      const balance = await fetchSKRBalance(walletAddress);
+      setSkrBalance(balance);
+    } catch (error) {
+      console.error('Error loading SKR balance:', error);
+    } finally {
+      setLoadingBalance(false);
+    }
+  };
+
   const handleConnectWallet = async () => {
+    if (walletNotAvailable) {
+      Alert.alert(
+        'Wallet Not Available',
+        'The Solana wallet adapter is not available in this build. Please rebuild the development build with native modules linked.'
+      );
+      return;
+    }
+
     setConnecting(true);
     try {
       // Use the useMobileWallet hook's connect method
+      const { connect } = useMobileWallet();
       await connect();
       
       // Get the connected account address
+      const { account } = useMobileWallet();
       if (account?.address) {
         const addressString = account.address.toBase58();
         
@@ -99,7 +120,10 @@ export default function ProfileScreen() {
   };
 
   const handleDisconnectWallet = async () => {
+    if (walletNotAvailable) return;
+
     try {
+      const { disconnect } = useMobileWallet();
       await disconnect();
       await removeWallet();
       Alert.alert('Disconnected', 'Wallet disconnected successfully');
@@ -225,6 +249,42 @@ export default function ProfileScreen() {
           <Text style={[styles.statLabel, { color: colors.tertiaryText }]}>Best Streak</Text>
         </View>
       </View>
+
+      {/* SKR Balance Card */}
+      {walletAddress && (
+        <View style={[styles.skrCard, { backgroundColor: colors.card }]}>
+          <View style={styles.skrHeader}>
+            <View style={styles.skrTitleContainer}>
+              <Text style={styles.skrIcon}>💰</Text>
+              <Text style={[styles.skrTitle, { color: colors.text }]}>SKR Balance</Text>
+            </View>
+            <TouchableOpacity 
+              style={[styles.refreshButton, { backgroundColor: colors.buttonBg }]}
+              onPress={loadSKRBalance}
+              disabled={loadingBalance}
+            >
+              <IconSymbol name="arrow.clockwise" size={16} color={colors.primary} />
+            </TouchableOpacity>
+          </View>
+          
+          {loadingBalance ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : skrBalance ? (
+            <>
+              <Text style={[styles.skrBalance, { color: colors.primary }]}>
+                {skrBalance.formattedBalance}
+              </Text>
+              <Text style={[styles.skrLabel, { color: colors.tertiaryText }]}>
+                SKR Tokens
+              </Text>
+            </>
+          ) : (
+            <Text style={[styles.skrError, { color: colors.tertiaryText }]}>
+              Unable to load balance
+            </Text>
+          )}
+        </View>
+      )}
 
       {/* Reading Progress Card */}
       {activePlanId && stats && (
@@ -502,5 +562,53 @@ const styles = StyleSheet.create({
   },
   progressStat: {
     fontSize: 14,
+  },
+  skrCard: {
+    marginHorizontal: 20,
+    marginBottom: 20,
+    padding: 20,
+    borderRadius: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+  },
+  skrHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  skrTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  skrIcon: {
+    fontSize: 24,
+  },
+  skrTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  refreshButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  skrBalance: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  skrLabel: {
+    fontSize: 14,
+  },
+  skrError: {
+    fontSize: 14,
+    textAlign: 'center',
   },
 });

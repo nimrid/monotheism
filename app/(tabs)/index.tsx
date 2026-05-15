@@ -1,5 +1,4 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
 import { API_URL } from '@/utils/api-config';
 import { DayStreak, getDayStreak, updateDayStreak } from '@/utils/day-streak';
@@ -9,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
 
 type VerseOfDay = {
   bookname: string;
@@ -19,9 +18,23 @@ type VerseOfDay = {
 };
 
 export default function HomeScreen() {
-  const { colors } = useTheme();
+  const systemColorScheme = useColorScheme();
   const { walletAddress } = useUser();
   const router = useRouter();
+  
+  // Use system color scheme for styling
+  const isDark = systemColorScheme === 'dark';
+  const colors = {
+    background: isDark ? '#1a1a1a' : '#f5f5f5',
+    card: isDark ? '#2a2a2a' : '#fff',
+    text: isDark ? '#fff' : '#000',
+    secondaryText: isDark ? '#aaa' : '#666',
+    tertiaryText: isDark ? '#888' : '#999',
+    border: isDark ? '#3a3a3a' : '#f0f0f0',
+    buttonBg: isDark ? '#3a3a3a' : '#e8e8e8',
+    primary: '#ff9500',
+  };
+  
   const [verseOfDay, setVerseOfDay] = useState<VerseOfDay | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingVerse, setSavingVerse] = useState(false);

@@ -5,6 +5,7 @@ const API_BASE_URL = API_URL;
 
 export type ChapterProgress = {
   id: string;
+  userId: string;
   planId: string;
   chapterId: string;
   bookName: string;
@@ -36,9 +37,14 @@ export type ReadingStreak = {
 };
 
 // Get all progress for a reading plan
-export const getPlanProgress = async (planId: string): Promise<ChapterProgress[]> => {
+export const getPlanProgress = async (walletAddress: string, planId: string): Promise<ChapterProgress[]> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/reading-plans/${planId}/progress`);
+    if (!walletAddress) {
+      console.warn('No wallet address provided to getPlanProgress');
+      return [];
+    }
+    
+    const response = await fetch(`${API_BASE_URL}/users/${walletAddress}/reading-plans/${planId}/progress`);
     if (!response.ok) {
       throw new Error('Failed to fetch plan progress');
     }
@@ -51,6 +57,7 @@ export const getPlanProgress = async (planId: string): Promise<ChapterProgress[]
 
 // Update chapter progress
 export const updateChapterProgress = async (
+  walletAddress: string,
   planId: string,
   chapterData: {
     chapterId: string;
@@ -64,7 +71,12 @@ export const updateChapterProgress = async (
   }
 ): Promise<ChapterProgress | null> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/reading-plans/${planId}/progress`, {
+    if (!walletAddress) {
+      console.warn('No wallet address provided to updateChapterProgress');
+      return null;
+    }
+    
+    const response = await fetch(`${API_BASE_URL}/users/${walletAddress}/reading-plans/${planId}/progress`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -85,12 +97,18 @@ export const updateChapterProgress = async (
 
 // Get progress for a specific day
 export const getDayProgress = async (
+  walletAddress: string,
   planId: string,
   dayNumber: number
 ): Promise<ChapterProgress[]> => {
   try {
+    if (!walletAddress) {
+      console.warn('No wallet address provided to getDayProgress');
+      return [];
+    }
+    
     const response = await fetch(
-      `${API_BASE_URL}/reading-plans/${planId}/progress/day/${dayNumber}`
+      `${API_BASE_URL}/users/${walletAddress}/reading-plans/${planId}/progress/day/${dayNumber}`
     );
     if (!response.ok) {
       throw new Error('Failed to fetch day progress');
@@ -103,9 +121,14 @@ export const getDayProgress = async (
 };
 
 // Get overall plan statistics
-export const getPlanStats = async (planId: string): Promise<PlanStats | null> => {
+export const getPlanStats = async (walletAddress: string, planId: string): Promise<PlanStats | null> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/reading-plans/${planId}/stats`);
+    if (!walletAddress) {
+      console.warn('No wallet address provided to getPlanStats');
+      return null;
+    }
+    
+    const response = await fetch(`${API_BASE_URL}/users/${walletAddress}/reading-plans/${planId}/stats`);
     if (!response.ok) {
       throw new Error('Failed to fetch plan stats');
     }
@@ -118,12 +141,18 @@ export const getPlanStats = async (planId: string): Promise<PlanStats | null> =>
 
 // Mark chapter as completed
 export const markChapterComplete = async (
+  walletAddress: string,
   planId: string,
   chapterId: string
 ): Promise<boolean> => {
   try {
+    if (!walletAddress) {
+      console.warn('No wallet address provided to markChapterComplete');
+      return false;
+    }
+    
     const response = await fetch(
-      `${API_BASE_URL}/reading-plans/${planId}/progress/${chapterId}/complete`,
+      `${API_BASE_URL}/users/${walletAddress}/reading-plans/${planId}/progress/${chapterId}/complete`,
       {
         method: 'PATCH',
       }
@@ -136,9 +165,14 @@ export const markChapterComplete = async (
 };
 
 // Get reading streak
-export const getReadingStreak = async (planId: string): Promise<ReadingStreak | null> => {
+export const getReadingStreak = async (walletAddress: string, planId: string): Promise<ReadingStreak | null> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/reading-plans/${planId}/streak`);
+    if (!walletAddress) {
+      console.warn('No wallet address provided to getReadingStreak');
+      return null;
+    }
+    
+    const response = await fetch(`${API_BASE_URL}/users/${walletAddress}/reading-plans/${planId}/streak`);
     if (!response.ok) {
       throw new Error('Failed to fetch reading streak');
     }
@@ -151,6 +185,7 @@ export const getReadingStreak = async (planId: string): Promise<ReadingStreak | 
 
 // Helper: Track reading session (call this when user starts reading a chapter)
 export const startReadingChapter = async (
+  walletAddress: string,
   planId: string,
   chapterData: {
     chapterId: string;
@@ -160,7 +195,7 @@ export const startReadingChapter = async (
     dayNumber: number;
   }
 ): Promise<void> => {
-  await updateChapterProgress(planId, {
+  await updateChapterProgress(walletAddress, planId, {
     ...chapterData,
     progressPercentage: 0,
     lastPosition: 0,
@@ -170,6 +205,7 @@ export const startReadingChapter = async (
 
 // Helper: Update reading position (call this periodically as user scrolls)
 export const updateReadingPosition = async (
+  walletAddress: string,
   planId: string,
   chapterData: {
     chapterId: string;
@@ -181,7 +217,7 @@ export const updateReadingPosition = async (
     lastPosition: number;
   }
 ): Promise<void> => {
-  await updateChapterProgress(planId, {
+  await updateChapterProgress(walletAddress, planId, {
     ...chapterData,
     completed: chapterData.progressPercentage >= 100,
   });
@@ -189,6 +225,7 @@ export const updateReadingPosition = async (
 
 // Helper: Complete chapter (call this when user finishes reading)
 export const completeChapter = async (
+  walletAddress: string,
   planId: string,
   chapterData: {
     chapterId: string;
@@ -198,7 +235,7 @@ export const completeChapter = async (
     dayNumber: number;
   }
 ): Promise<void> => {
-  await updateChapterProgress(planId, {
+  await updateChapterProgress(walletAddress, planId, {
     ...chapterData,
     progressPercentage: 100,
     lastPosition: 0,

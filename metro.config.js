@@ -20,4 +20,15 @@ config.transformer = {
   },
 };
 
+// Add support for Solana and crypto modules
+config.resolver = {
+  ...config.resolver,
+  extraNodeModules: {
+    crypto: require.resolve('react-native-quick-crypto'),
+    stream: require.resolve('stream-browserify'),
+    buffer: require.resolve('buffer'),
+  },
+};
+
 module.exports = config;
+

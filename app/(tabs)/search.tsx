@@ -1,5 +1,6 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
+import { fetchBibleStoriesVerse } from '@/utils/verse-search';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useState } from 'react';
@@ -95,15 +96,20 @@ export default function SearchScreen() {
 
   const parseVerseReference = (query: string): { book: string; chapter: string; verse: string } | null => {
     // Match patterns like "John 3:16", "1 John 3:16", "2 Corinthians 4:16", "Psalm 23:1"
-    const match = query.match(/^(\d?\s?[a-zA-Z\s]+?)\s+(\d+):(\d+)$/i);
+    // Also match verse ranges like "Romans 8:24-25" or "1 Peter 5:8-10"
+    const match = query.match(/^(\d?\s?[a-zA-Z\s]+?)\s+(\d+):(\d+)(?:-(\d+))?$/i);
     if (!match) return null;
 
     let book = match[1].trim().toLowerCase();
     const chapter = match[2];
-    const verse = match[3];
+    const startVerse = match[3];
+    const endVerse = match[4] || match[3]; // If no end verse, use start verse
 
     // Handle numbered books: "1 peter" -> "1-peter", "2 corinthians" -> "2-corinthians"
     book = book.replace(/^(\d+)\s+/, '$1-').replace(/\s+/g, '-');
+
+    // Return the verse range as a single string for compatibility
+    const verse = endVerse !== startVerse ? `${startVerse}-${endVerse}` : startVerse;
 
     return { book, chapter, verse };
   };
@@ -116,16 +122,39 @@ export default function SearchScreen() {
     setError(null);
     setSearchResult(null);
     setTopicResults([]);
-    setSearchMode('verse');
 
     const parsed = parseVerseReference(trimmedQuery);
     if (!parsed) {
-      setError('Invalid format. Use format like "John 3:16" or "1 Peter 5:8"');
+      setError('Invalid format. Use format like "John 3:16", "1 Peter 5:8", or "Romans 8:24-25"');
       setLoading(false);
       return;
     }
 
     try {
+      // Check if it's a verse range
+      const isRange = parsed.verse.includes('-');
+      
+      if (isRange) {
+        // Use fetchBibleStoriesVerse for ranges
+        const verseResult = await fetchBibleStoriesVerse(trimmedQuery, RAPIDAPI_KEY!, RAPIDAPI_HOST!);
+        
+        if (verseResult) {
+          // Convert VerseRangeResult to VerseResult format for display
+          setSearchResult({
+            verse: verseResult.verses,
+            text: verseResult.text,
+            book: verseResult.book,
+            chapter: verseResult.startChapter,
+          });
+          await saveRecentSearch(trimmedQuery);
+          setLoading(false);
+          return;
+        } else {
+          throw new Error('Verse range not found');
+        }
+      }
+
+      // Single verse search (existing logic)
       const hasNumberPrefix = /^\d/.test(parsed.book);
       
       if (hasNumberPrefix) {
@@ -305,7 +334,7 @@ export default function SearchScreen() {
           <IconSymbol name="magnifyingglass" size={20} color={colors.tertiaryText} />
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Search verses (e.g., John 3:16, 1 Peter 5:8)"
+            placeholder="Search verses (e.g., John 3:16, Romans 8:24-25)"
             placeholderTextColor={colors.tertiaryText}
             value={searchQuery}
             onChangeText={setSearchQuery}
