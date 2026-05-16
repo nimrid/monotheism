@@ -1,24 +1,31 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
+import { useSolanaPayment } from '@/hooks/useSolanaPayment';
 import { checkTrialStatus, createReadingPlanInDB, fetchReadingPlans, getReadingPlanById, SavedReadingPlan, TrialStatus } from '@/utils/database';
 import { saveReadingPlanPreferences } from '@/utils/reading-plan';
+import { syncSubscriptionWithBackend } from '@/utils/subscription';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createTransferInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
-import { PublicKey, Transaction } from '@solana/web3.js';
+import { transact } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 const RECIPIENT_WALLET = 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
-const SKR_MINT = 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3';
 const COST_PER_DAY_SKR = 10;
+
+// Identity used for Mobile Wallet Adapter authorization
+const APP_IDENTITY = {
+  name: 'Monotheism',
+  uri: 'https://monotheism.app',
+  icon: 'favicon.ico',
+};
 
 export default function ReadingPlanSetupScreen() {
   const { colors } = useTheme();
   const { walletAddress } = useUser();
-  const [walletNotAvailable] = useState(true); // Wallet is not available in dev build
   const router = useRouter();
+  const { paying, payWithSKR } = useSolanaPayment();
   const [days, setDays] = useState('30');
   const [age, setAge] = useState('');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -27,7 +34,6 @@ export default function ReadingPlanSetupScreen() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [trialStatus, setTrialStatus] = useState<TrialStatus | null>(null);
-  const [paying, setPaying] = useState(false);
 
   useEffect(() => {
     loadSavedPlans();
@@ -97,68 +103,74 @@ export default function ReadingPlanSetupScreen() {
   };
 
   const handlePaymentAndCreate = async (daysNum: number, ageNum: number, totalCost: number) => {
-    if (walletNotAvailable) {
+    if (!walletAddress) {
       Alert.alert(
-        'Wallet Not Available',
-        'The Solana wallet adapter is not available in this build. Please rebuild the development build with native modules linked.'
+        'Wallet Required',
+        'Please connect your wallet first.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Go to Profile', onPress: () => router.push('/(tabs)/profile') },
+        ]
       );
       return;
     }
 
-    if (!account?.address) {
-      Alert.alert('Wallet Required', 'Please connect your wallet to make a payment');
-      return;
-    }
-
-    setPaying(true);
     try {
-      console.log('Creating SKR token payment for reading plan...');
-      console.log('Amount:', totalCost, 'SKR tokens');
+      console.log('[ReadingPlan] Starting SKR payment:', totalCost, 'SKR');
 
-      // Get latest blockhash with context
-      const { context, value: { blockhash } } = await connection.getLatestBlockhashAndContext();
+      // Provide the Mobile Wallet Adapter signer to the payment hook
+      const result = await payWithSKR(
+        RECIPIENT_WALLET,
+        totalCost,
+        async (transaction) => {
+          return await transact(async (wallet: any) => {
+            // Authorize the app with the wallet
+            const authResult = await wallet.authorize({
+              cluster: 'mainnet-beta',
+              identity: APP_IDENTITY,
+            });
 
-      // Get associated token accounts
-      const senderTokenAccount = await getAssociatedTokenAddress(
-        new PublicKey(SKR_MINT),
-        account.address
+            console.log('[ReadingPlan] Wallet authorized:', authResult.accounts[0]?.address);
+
+            // Sign and send the pre-built transaction
+            const results = await wallet.signAndSendTransactions({
+              transactions: [transaction],
+            });
+
+            if (!results || results.length === 0) {
+              throw new Error('No transaction result returned from wallet');
+            }
+
+            return results[0] as string;
+          });
+        }
       );
 
-      const recipientTokenAccount = await getAssociatedTokenAddress(
-        new PublicKey(SKR_MINT),
-        new PublicKey(RECIPIENT_WALLET)
+      console.log('[ReadingPlan] Payment confirmed. Signature:', result.signature);
+
+      // Sync subscription to backend (non-blocking on failure)
+      syncSubscriptionWithBackend(walletAddress, result.signature, totalCost).catch(
+        (e) => console.warn('[ReadingPlan] Backend sync failed (non-fatal):', e)
       );
-
-      // Create transaction with SPL token transfer
-      const transaction = new Transaction({
-        recentBlockhash: blockhash,
-        feePayer: account.address,
-      }).add(
-        createTransferInstruction(
-          senderTokenAccount,
-          recipientTokenAccount,
-          account.address,
-          totalCost * Math.pow(10, 6) // Assuming 6 decimals for SKR token
-        )
-      );
-
-      console.log('Sending SKR token transfer transaction...');
-
-      // Sign and send transaction
-      const signature = await signAndSendTransaction(transaction, context.slot);
-
-      console.log('Payment transaction signature:', signature);
 
       // Create plan with payment signature
-      await createPlanWithPayment(daysNum, ageNum, signature);
+      await createPlanWithPayment(daysNum, ageNum, result.signature);
     } catch (error: any) {
-      console.error('Payment failed:', error);
+      console.error('[ReadingPlan] Payment failed:', error);
+      const code = error?.code ?? '';
+      if (code === 'WALLET_NOT_CONNECTED') return; // alert already shown by hook
+      if (code === 'INSUFFICIENT_BALANCE') {
+        Alert.alert('Insufficient Balance', error.message);
+        return;
+      }
+      if (code === 'USER_REJECTED') {
+        Alert.alert('Cancelled', 'Transaction was cancelled.');
+        return;
+      }
       Alert.alert(
         'Payment Failed',
-        error.message || 'Unable to process payment. Make sure you have enough SKR tokens in your wallet.'
+        error.message ?? 'Unable to process payment. Please try again.'
       );
-    } finally {
-      setPaying(false);
     }
   };
 

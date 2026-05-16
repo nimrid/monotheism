@@ -1,4 +1,5 @@
 import { API_URL } from '@/utils/api-config';
+import { fetchAndSyncSubscription } from '@/utils/subscription';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
@@ -36,7 +37,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       const savedAddress = await AsyncStorage.getItem(WALLET_KEY);
       if (savedAddress) {
         setWalletAddress(savedAddress);
-        await fetchUserData(savedAddress);
+        // Run in parallel — don't block wallet load on either request
+        await Promise.all([
+          fetchUserData(savedAddress),
+          syncSubscriptionForWallet(savedAddress),
+        ]);
       }
     } catch (error) {
       console.error('Failed to load wallet:', error);
@@ -57,30 +62,49 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  /**
+   * Silently fetches the subscription status for a wallet from the backend
+   * and syncs it to AsyncStorage. This ensures:
+   *  - Users who already paid are never asked to pay again
+   *  - Premium status is restored correctly after reinstall / device change
+   */
+  const syncSubscriptionForWallet = async (address: string) => {
+    try {
+      const status = await fetchAndSyncSubscription(address);
+      if (status.isPremium) {
+        console.log(
+          `[UserContext] Premium subscription restored for ${address}`
+        );
+      }
+    } catch (error) {
+      // Non-fatal — user will get prompted on next premium access attempt
+      console.warn('[UserContext] Subscription sync failed (non-fatal):', error);
+    }
+  };
+
   const connectWallet = async (address: string) => {
     try {
       console.log('UserContext: Connecting wallet with address:', address);
       console.log('UserContext: Address length:', address.length);
-      
+
       // Save to local storage
       await AsyncStorage.setItem(WALLET_KEY, address);
       setWalletAddress(address);
       console.log('UserContext: Saved to AsyncStorage');
 
-      // Save to database
+      // Save to database + sync subscription (parallel)
       console.log('UserContext: Calling API to save to database...');
-      const response = await fetch(`${API_URL}/users/connect-wallet`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          walletAddress: address,
+      const [response] = await Promise.all([
+        fetch(`${API_URL}/users/connect-wallet`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ walletAddress: address }),
         }),
-      });
+        syncSubscriptionForWallet(address),
+      ]);
 
       console.log('UserContext: API response status:', response.status);
-      
+
       if (response.ok) {
         const userData = await response.json();
         console.log('UserContext: User data from API:', userData);
@@ -109,7 +133,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const refreshUser = async () => {
     if (walletAddress) {
-      await fetchUserData(walletAddress);
+      await Promise.all([
+        fetchUserData(walletAddress),
+        syncSubscriptionForWallet(walletAddress),
+      ]);
     }
   };
 

@@ -1,7 +1,9 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import PremiumPaywallModal from '@/components/PremiumPaywallModal';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
 import { API_URL } from '@/utils/api-config';
+import { hasPremiumAccess } from '@/utils/subscription';
 import { fetchBibleStoriesVerse, VerseRangeResult } from '@/utils/verse-search';
 import * as Clipboard from 'expo-clipboard';
 import { Stack, useRouter } from 'expo-router';
@@ -34,9 +36,13 @@ export default function BibleStoriesScreen() {
   const [selectedVerse, setSelectedVerse] = useState<VerseRangeResult | null>(null);
   const [loadingVerse, setLoadingVerse] = useState(false);
   const [savingVerse, setSavingVerse] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  const [checkingPremium, setCheckingPremium] = useState(true);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
 
   useEffect(() => {
     fetchStories();
+    checkPremiumStatus();
   }, []);
 
   useEffect(() => {
@@ -50,9 +56,28 @@ export default function BibleStoriesScreen() {
     }
   }, [searchQuery, stories]);
 
+  const checkPremiumStatus = async () => {
+    try {
+      const premium = await hasPremiumAccess();
+      setIsPremium(premium);
+    } catch (error) {
+      console.error('Error checking premium status:', error);
+    } finally {
+      setCheckingPremium(false);
+    }
+  };
+
   const fetchStories = async () => {
     setLoading(true);
     setError(null);
+
+    // Check premium status first
+    const hasPremium = await hasPremiumAccess();
+    if (!hasPremium) {
+      setLoading(false);
+      setShowPremiumModal(true);
+      return;
+    }
 
     try {
       const response = await fetch(
@@ -367,6 +392,16 @@ export default function BibleStoriesScreen() {
             </View>
           </View>
         </Modal>
+
+        {/* Premium Paywall Modal (shared component with real SKR payment) */}
+        <PremiumPaywallModal
+          visible={showPremiumModal}
+          onClose={() => setShowPremiumModal(false)}
+          onSuccess={() => {
+            setIsPremium(true);
+            fetchStories();
+          }}
+        />
       </View>
     </>
   );
@@ -541,3 +576,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+

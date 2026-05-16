@@ -8,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
 
 type VerseOfDay = {
   bookname: string;
@@ -206,8 +206,17 @@ export default function HomeScreen() {
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.contentContainer}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={[styles.greeting, { color: colors.secondaryText }]}>{getGreeting()}</Text>
-        <Text style={[styles.title, { color: colors.text }]}>Start your day with God</Text>
+        <View style={styles.headerLeft}>
+          <Image
+            source={require('@/assets/images/app-logo.jpg')}
+            style={styles.headerLogo}
+            resizeMode="contain"
+          />
+          <View>
+            <Text style={[styles.greeting, { color: colors.secondaryText }]}>{getGreeting()}</Text>
+            <Text style={[styles.title, { color: colors.text }]}>Monotheism</Text>
+          </View>
+        </View>
       </View>
 
       {/* Verse Card */}
@@ -586,13 +595,26 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 20,
     paddingTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerLogo: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
   },
   greeting: {
-    fontSize: 16,
-    marginBottom: 4,
+    fontSize: 13,
+    marginBottom: 2,
   },
   title: {
-    fontSize: 28,
+    fontSize: 20,
     fontWeight: 'bold',
   },
   verseCard: {

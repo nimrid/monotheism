@@ -9,7 +9,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function ProfileScreen() {
   const { isDarkMode, toggleTheme, colors } = useTheme();
@@ -165,7 +165,14 @@ export default function ProfileScreen() {
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.text }]}>Profile</Text>
+        <View style={styles.headerLeft}>
+          <Image
+            source={require('@/assets/images/app-logo.jpg')}
+            style={styles.headerLogo}
+            resizeMode="contain"
+          />
+          <Text style={[styles.title, { color: colors.text }]}>Profile</Text>
+        </View>
         <TouchableOpacity style={[styles.themeButton, { backgroundColor: colors.buttonBg }]} onPress={toggleTheme}>
           <IconSymbol name={isDarkMode ? 'sun.max' : 'moon'} size={20} color={colors.text} />
         </TouchableOpacity>
@@ -368,6 +375,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 60,
     paddingBottom: 16,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerLogo: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
   },
   title: {
     fontSize: 32,

@@ -1,8 +1,12 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useSolanaPayment } from '@/hooks/useSolanaPayment';
+import { transact } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
 import { Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
+    ActivityIndicator,
+    Alert,
     Dimensions,
     Image,
     Modal,
@@ -15,7 +19,15 @@ import {
 import { WebView } from 'react-native-webview';
 
 const RECIPIENT_WALLET = 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
-const WATCH_VIDEO_COST = 5000000; // 0.005 SOL (devnet)
+// Cost per video in SKR (replace with your pricing decision)
+const WATCH_VIDEO_COST_SKR = 5; // 5 SKR per video
+
+// Identity used for Mobile Wallet Adapter authorization
+const APP_IDENTITY = {
+  name: 'Monotheism',
+  uri: 'https://monotheism.app',
+  icon: 'favicon.ico',
+};
 
 type Sermon = {
   id: string;
@@ -114,75 +126,64 @@ const sermons: Sermon[] = [
 
 const { width } = Dimensions.get('window');
 
+
 export default function HermeneuticsScreen() {
   const { colors } = useTheme();
   const router = useRouter();
-  const { account, signAndSendTransaction, connection } = useMobileWallet();
+  const { paying, payWithSKR } = useSolanaPayment();
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
-  const [paying, setPaying] = useState(false);
   const [payingVideoId, setPayingVideoId] = useState<string | null>(null);
 
   const handlePayAndWatch = async (sermon: Sermon) => {
-    // Check if wallet is connected
-    if (!account?.address) {
-      Alert.alert(
-        'Wallet Required',
-        'Please connect your wallet to watch videos.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Go to Profile', onPress: () => router.push('/(tabs)/profile') },
-        ]
-      );
-      return;
-    }
-
-    setPaying(true);
     setPayingVideoId(sermon.videoId);
 
     try {
-      console.log('Processing payment for video:', sermon.title);
-      console.log('From:', account.address.toBase58());
-      console.log('To:', RECIPIENT_WALLET);
-      console.log('Amount:', WATCH_VIDEO_COST, 'lamports (0.005 SOL)');
+      console.log('[Hermeneutics] Starting SKR payment for:', sermon.title);
 
-      // Get latest blockhash with context
-      const { context, value: { blockhash } } = await connection.getLatestBlockhashAndContext();
+      await payWithSKR(
+        RECIPIENT_WALLET,
+        WATCH_VIDEO_COST_SKR,
+        async (transaction) => {
+          return await transact(async (wallet: any) => {
+            const authResult = await wallet.authorize({
+              cluster: 'mainnet-beta',
+              identity: APP_IDENTITY,
+            });
 
-      // Create transaction
-      const transaction = new Transaction({
-        recentBlockhash: blockhash,
-        feePayer: account.address,
-      }).add(
-        SystemProgram.transfer({
-          fromPubkey: account.address,
-          toPubkey: new PublicKey(RECIPIENT_WALLET),
-          lamports: WATCH_VIDEO_COST,
-        })
+            console.log('[Hermeneutics] Wallet authorized:', authResult.accounts[0]?.address);
+
+            const results = await wallet.signAndSendTransactions({
+              transactions: [transaction],
+            });
+
+            if (!results || results.length === 0) {
+              throw new Error('No transaction result returned from wallet');
+            }
+
+            return results[0] as string;
+          });
+        }
       );
 
-      console.log('Sending transaction...');
-
-      // Sign and send transaction
-      const signature = await signAndSendTransaction(transaction, context.slot);
-
-      console.log('Payment transaction signature:', signature);
-      console.log('Payment confirmed, opening video');
-
-      // Payment successful, open video
+      console.log('[Hermeneutics] Payment confirmed, opening video:', sermon.title);
       openVideo(sermon.videoId);
     } catch (error: any) {
-      console.error('Payment failed:', error);
-      console.error('Error details:', {
-        message: error.message,
-        stack: error.stack,
-        name: error.name,
-      });
+      console.error('[Hermeneutics] Payment failed:', error);
+      const code = error?.code ?? '';
+      if (code === 'WALLET_NOT_CONNECTED') return; // alert already shown by hook
+      if (code === 'USER_REJECTED') {
+        Alert.alert('Cancelled', 'Transaction was cancelled.');
+        return;
+      }
+      if (code === 'INSUFFICIENT_BALANCE') {
+        Alert.alert('Insufficient Balance', error.message);
+        return;
+      }
       Alert.alert(
         'Payment Failed',
-        error.message || 'Unable to process payment. Make sure you have enough SOL in your wallet and are connected to devnet.'
+        error.message ?? 'Unable to process payment. Please try again.'
       );
     } finally {
-      setPaying(false);
       setPayingVideoId(null);
     }
   };
@@ -221,7 +222,7 @@ export default function HermeneuticsScreen() {
         <View style={[styles.pricingBadge, { backgroundColor: colors.background }]}>
           <IconSymbol name="play.circle.fill" size={16} color={colors.primary} />
           <Text style={[styles.pricingText, { color: colors.primary }]}>
-            0.005 SOL per video
+            {WATCH_VIDEO_COST_SKR} SKR per video
           </Text>
         </View>
       </View>
@@ -248,7 +249,7 @@ export default function HermeneuticsScreen() {
                 {/* Price Badge */}
                 <View style={styles.priceBadge}>
                   <IconSymbol name="creditcard.fill" size={12} color="#fff" />
-                  <Text style={styles.priceText}>0.005 SOL</Text>
+                  <Text style={styles.priceText}>{WATCH_VIDEO_COST_SKR} SKR</Text>
                 </View>
               </View>
               <View style={styles.videoInfo}>

@@ -1,29 +1,28 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import PremiumPaywallModal from '@/components/PremiumPaywallModal';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useUser } from '@/contexts/UserContext';
+import { hasPremiumAccess } from '@/utils/subscription';
 import { fetchBibleStoriesVerse, VerseRangeResult } from '@/utils/verse-search';
-import { createTransferInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
-import { PublicKey, Transaction } from '@solana/web3.js';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Animated,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 
 const RAPIDAPI_KEY = process.env.EXPO_PUBLIC_RAPIDAPI_KEY;
 const RAPIDAPI_HOST = process.env.EXPO_PUBLIC_RAPIDAPI_HOST;
-const RECIPIENT_WALLET = 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
-const SKR_MINT = 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3';
-const SEARCH_COST_SKR = 35; // 35 SKR token
 
 type DefinitionResult = {
   word: string;
@@ -35,7 +34,7 @@ type SearchResult = DefinitionResult | VerseRangeResult;
 export default function BibleDefinitionScreen() {
   const { colors } = useTheme();
   const router = useRouter();
-  const [walletNotAvailable] = useState(true); // Wallet is not available in dev build
+  const { walletAddress } = useUser();
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -43,94 +42,38 @@ export default function BibleDefinitionScreen() {
   const [error, setError] = useState<string | null>(null);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [isVerseResult, setIsVerseResult] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  const [checkingPremium, setCheckingPremium] = useState(true);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
   const fadeAnim = useState(new Animated.Value(0))[0];
+
+  React.useEffect(() => {
+    checkPremiumStatus();
+  }, []);
+
+  const checkPremiumStatus = async () => {
+    try {
+      const premium = await hasPremiumAccess();
+      setIsPremium(premium);
+    } catch (error) {
+      console.error('Error checking premium status:', error);
+    } finally {
+      setCheckingPremium(false);
+    }
+  };
 
   const handlePayAndSearch = async () => {
       if (!query.trim()) return;
 
-      if (walletNotAvailable) {
-        Alert.alert(
-          'Wallet Not Available',
-          'The Solana wallet adapter is not available in this build. Please rebuild the development build with native modules linked.'
-        );
+      // Check premium status first
+      const hasPremium = await hasPremiumAccess();
+      if (!hasPremium) {
+        setShowPremiumModal(true);
         return;
       }
 
-      // Check if wallet is connected
-      if (!account?.address) {
-        Alert.alert(
-          'Wallet Required',
-          'Please connect your wallet to search Bible definitions.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Go to Profile', onPress: () => router.push('/(tabs)/profile') },
-          ]
-        );
-        return;
-      }
-
-      setPaying(true);
-      setError(null);
-
-      try {
-        console.log('Creating SKR token payment transaction...');
-        console.log('From:', account.address.toBase58());
-        console.log('To:', RECIPIENT_WALLET);
-        console.log('Amount:', SEARCH_COST_SKR, 'SKR tokens');
-
-        // Get latest blockhash with context
-        const { context, value: { blockhash } } = await connection.getLatestBlockhashAndContext();
-
-        // Get associated token accounts
-        const senderTokenAccount = await getAssociatedTokenAddress(
-          new PublicKey(SKR_MINT),
-          account.address
-        );
-
-        const recipientTokenAccount = await getAssociatedTokenAddress(
-          new PublicKey(SKR_MINT),
-          new PublicKey(RECIPIENT_WALLET)
-        );
-
-        // Create transaction with SPL token transfer
-        const transaction = new Transaction({
-          recentBlockhash: blockhash,
-          feePayer: account.address,
-        }).add(
-          createTransferInstruction(
-            senderTokenAccount,
-            recipientTokenAccount,
-            account.address,
-            SEARCH_COST_SKR * Math.pow(10, 6) // Assuming 6 decimals for SKR token
-          )
-        );
-
-        console.log('Sending SKR token transfer transaction...');
-
-        // Sign and send transaction using useMobileWallet
-        // minContextSlot ensures the transaction is processed after this slot
-        const signature = await signAndSendTransaction(transaction, context.slot);
-
-        console.log('Payment transaction signature:', signature);
-        console.log('Payment confirmed, proceeding with search');
-
-        // Payment successful, now search
-        await searchDefinition();
-      } catch (error: any) {
-        console.error('Payment failed:', error);
-        console.error('Error details:', {
-          message: error.message,
-          stack: error.stack,
-          name: error.name,
-        });
-        setError('Payment failed. Please try again.');
-        Alert.alert(
-          'Payment Failed',
-          error.message || 'Unable to process payment. Make sure you have enough SKR tokens in your wallet and are connected to Solana mainnet.'
-        );
-      } finally {
-        setPaying(false);
-      }
+      // If premium, proceed with search
+      await searchDefinition();
     }
 
   const searchDefinition = async () => {
@@ -267,7 +210,7 @@ export default function BibleDefinitionScreen() {
           {/* Payment Info */}
           <View style={styles.paymentInfo}>
             <Text style={styles.paymentInfoText}>
-              💰 35 SKR token per search
+              💰 Premium Access: 200 SKR one-time payment
             </Text>
           </View>
 
@@ -282,7 +225,7 @@ export default function BibleDefinitionScreen() {
               <>
                 <IconSymbol name={paying ? 'creditcard' : 'magnifyingglass'} size={18} color="#fff" />
                 <Text style={styles.searchButtonText}>
-                  {paying ? 'Processing Payment...' : 'Pay & Search'}
+                  {paying ? 'Processing...' : 'Search'}
                 </Text>
               </>
             )}
@@ -452,12 +395,22 @@ export default function BibleDefinitionScreen() {
                 Smith's Bible Dictionary provides detailed definitions of biblical terms, names, places, and concepts to enhance your understanding of Scripture.
               </Text>
               <Text style={[styles.infoText, { color: colors.secondaryText, marginTop: 8 }]}>
-                Each search costs 35 SKR token on Solana Mainnet. Connect your wallet to get started.
+                Premium access costs 200 SKR one-time for lifetime access to all dictionary searches, Bible stories, and parables.
               </Text>
             </View>
           </View>
         )}
       </ScrollView>
+
+      {/* Premium Paywall Modal (shared component with real SKR payment) */}
+      <PremiumPaywallModal
+        visible={showPremiumModal}
+        onClose={() => setShowPremiumModal(false)}
+        onSuccess={() => {
+          setIsPremium(true);
+          checkPremiumStatus();
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -716,3 +669,4 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+
