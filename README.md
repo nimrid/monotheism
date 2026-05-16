@@ -1,101 +1,110 @@
-# Welcome to your Expo app 👋
+# Monotheism Mobile App 📖⚡
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Welcome to **Monotheism**, a premium, feature-rich React Native mobile application built on Expo, designed to enrich your biblical study and reading journey. With structured plans, study aids, and advanced Web3 integrations, Monotheism merges classic theological research with modern app features.
 
-## 📖 Reading Plans Feature
+<p align="center">
+  <img src="./assets/images/app-logo.png" width="150" height="150" style="border-radius: 20%;" alt="Monotheism Logo" />
+</p>
 
-This app includes a full-stack reading plans feature with database persistence and progress tracking!
+---
 
-### Quick Start for Reading Plans
+## ✨ Core Features
 
-1. **Install backend dependencies**
-   ```bash
-   cd backend
-   npm install
-   cd ..
-   ```
+Monotheism offers a full suite of features curated to provide the ultimate spiritual study experience:
 
-2. **Start the backend and app**
-   ```bash
-   ./start-with-backend.sh
-   ```
-   
-   Or manually:
-   ```bash
-   # Terminal 1 - Backend
-   cd backend && npm start
-   
-   # Terminal 2 - App
-   npm start
-   ```
+*   **📖 Structured Reading Plans** – Create and manage customizable daily reading plans tailored to your timeframe, complete with progress tracking and automatic stat summaries.
+*   **🔥 Day Streaks & Tracking** – Keep consistent with your reading habit using dynamic day-streak trackers and historical active days metrics.
+*   **✝️ Parables of Jesus** – Learn from interactive lessons detailing all the parables of Jesus, complete with spiritual contexts and translations.
+*   **📚 Comprehensive Bible Dictionary** – Instantly search and look up definitions for thousands of biblical terms directly within the app.
+*   **🎥 Hermeneutics & Study Videos** – Dive deeper into biblical interpretation through an integrated video streaming resource hub.
+*   **💾 Saved Verses & Notes** – Easily bookmark meaningful verses and add personal reflection notes, all synced securely to the database.
 
-3. **Use the features**
-   - Navigate to "Create Reading Plan"
-   - Create a named reading plan
-   - View all your saved plans
-   - Click any plan to load it
-   - Read chapters and track progress automatically
+---
 
-### Features
+## 🔗 Solana SKR Token Integration
 
-✅ **Create & Manage Plans** - Save multiple reading plans to database
-✅ **Progress Tracking** - Automatically track reading progress as you read
-✅ **Reading Streaks** - Monitor consecutive days of reading
-✅ **Statistics** - View completion percentages and chapter counts
-✅ **Resume Reading** - Pick up where you left off in any chapter
+Monotheism features a production-ready **on-chain Web3 premium payment flow** using Solana mobile tech:
 
-📚 **Documentation:**
-- `QUICK_START.md` - Fast setup guide
-- `QUICK_REFERENCE.md` - Quick reference for progress tracking
-- `PROGRESS_TRACKING_GUIDE.md` - Complete progress tracking guide
-- `READING_PLANS_SETUP.md` - Detailed documentation
-- `ARCHITECTURE.md` - System architecture
-- `CHECKLIST.md` - Step-by-step checklist
-- `IMPLEMENTATION_SUMMARY.md` - Complete feature overview
+1.  **Centralized Premium Modal (`PremiumPaywallModal`)**
+    *   Unified gated-access screen utilized universally across all premium sections (Bible Stories, Parables, and Bible Dictionary).
+2.  **Solana SPL Token Transfers (SKR Token)**
+    *   Initiate real token transactions utilizing the specific SKR SPL Mint: `SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3` with full decimal adjustments.
+3.  **Pre-Flight Deduplication & Restores**
+    *   Checks the backend database before initializing transaction sequences. If a user previously paid, their premium status is restored silently, preventing redundant payments.
+4.  **Auto-Sync & Device Portability**
+    *   Subscriptions are tied directly to the connected wallet address on-chain. Restores work instantly upon reloading the wallet address on new devices or app reinstalls.
+5.  **Granular Error Feedback**
+    *   Proper, user-friendly handling for complex states: `WALLET_NOT_CONNECTED`, `INSUFFICIENT_BALANCE`, `USER_REJECTED`, and `NETWORK_ERROR`.
 
-## Get started
+---
 
-1. Install dependencies
+## 🛠️ Tech Stack & Architecture
 
-   ```bash
-   npm install
-   ```
+### **Front-End Mobile Client**
+*   **Core:** React Native, TypeScript, Expo Router (File-based navigation)
+*   **Web3 Client:** `@solana/web3.js`, `@solana/spl-token`, and `@solana-mobile/mobile-wallet-adapter-protocol-web3js` for secure on-device transaction signing.
+*   **Storage:** `@react-native-async-storage/async-storage` for local state persistence.
 
-2. Start the app
+### **Back-End API (`/backend`)**
+The backend has been modularized from a single monolith server into a clean, modern Express router-based architecture:
+*   `server.js` — Lightweight entry point handling middlewares and core routes.
+*   `db.js` — Shared Postgres connection pool singleton (efficient connection management).
+*   `initDB.js` — Automated schema initializer (3-phase migration strategy ensuring compatibility with older database structures by dynamically adding missing FK columns, constraints, and indexes).
+*   `routes/` — Modular route files:
+    *   `users.js` — Wallet connections and user data management.
+    *   `savedVerses.js` — Verse bookmarks and notes.
+    *   `readingPlans.js` — Plan generation, payment validation, and trial options.
+    *   `readingProgress.js` — Chapter completions, streaks, and plan statistics.
+    *   `subscriptions.js` — Gated premium status checks and on-chain payment registration.
 
-   ```bash
-   npx expo start
-   ```
+---
 
-In the output, you'll find options to open the app in a
+## 🚀 Getting Started
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+Ensure you have [Node.js](https://nodejs.org) and [Git](https://git-scm.com) installed.
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+### **1. Configure Environment Variables**
 
-## Get a fresh project
+Before starting, establish configuration environments for the mobile client and the API server.
 
-When you're ready, run:
-
-```bash
-npm run reset-project
+**App Client Environment (`/.env`):**
+```ini
+EXPO_PUBLIC_SOLANA_RPC=https://solana-mainnet.g.alchemy.com/v2/your-api-key # Or public Solana RPC
+EXPO_PUBLIC_SKR_MINT=SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3
+EXPO_PUBLIC_SKR_DECIMALS=6
+EXPO_PUBLIC_RECIPIENT_WALLET=GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+**Backend Environment (`/backend/.env`):**
+```ini
+DATABASE_URL=postgresql://user:pass@host:port/dbname?sslmode=verify-full
+PORT=3000
+```
 
-## Learn more
+### **2. Setup and Run Backend**
+```bash
+cd backend
+npm install
+npm run dev # Launches Node server with Nodemon (auto-updates database schema)
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+### **3. Setup and Run Mobile Client**
+Open a new terminal session at the project root:
+```bash
+npm install
+npx expo start # Select "a" for Android, "i" for iOS, or "w" for web
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Alternatively, use the convenience shell script:
+```bash
+./start-with-backend.sh
+```
 
-## Join the community
+---
 
-Join our community of developers creating universal apps.
+## 📚 Development & Deployment Docs
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Need to read more deeply into the specific mechanics? Check out our detailed markdown guides:
+*   [QUICK_START.md](./QUICK_START.md) — Rapid configuration checklist.
+*   [PROGRESS_TRACKING_GUIDE.md](./PROGRESS_TRACKING_GUIDE.md) — Comprehensive explanation of reading stats logic.
+*   [ARCHITECTURE.md](./ARCHITECTURE.md) — Technical database schemas, tables, and relation diagrams.
