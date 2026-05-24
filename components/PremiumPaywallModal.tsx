@@ -21,7 +21,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
 import { useSolanaPayment } from '@/hooks/useSolanaPayment';
 import { syncSubscriptionWithBackend } from '@/utils/subscription';
-import { transact } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
+import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { useRouter } from 'expo-router';
 import React from 'react';
 import {
@@ -38,13 +38,7 @@ import {
 // ─── Config ───────────────────────────────────────────────────────────────────
 const RECIPIENT_WALLET =
   process.env.EXPO_PUBLIC_RECIPIENT_WALLET ?? 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
-const PREMIUM_COST_SKR = 350;
-
-const APP_IDENTITY = {
-  name: 'Monotheism',
-  uri: 'https://monotheism.app',
-  icon: 'https://monotheism.app/app-logo.png',
-};
+const PREMIUM_COST_SKR = 10;
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 type Props = {
@@ -60,6 +54,7 @@ export default function PremiumPaywallModal({ visible, onClose, onSuccess }: Pro
   const { walletAddress } = useUser();
   const router = useRouter();
   const { paying, payWithSKR } = useSolanaPayment();
+  const { signAndSendTransaction } = useMobileWallet();
 
   const handlePurchase = async () => {
     if (!walletAddress) {
@@ -85,27 +80,9 @@ export default function PremiumPaywallModal({ visible, onClose, onSuccess }: Pro
         RECIPIENT_WALLET,
         PREMIUM_COST_SKR,
         async (transaction) => {
-          return await transact(async (wallet: any) => {
-            const authResult = await wallet.authorize({
-              cluster: 'mainnet-beta',
-              identity: APP_IDENTITY,
-            });
-
-            console.log(
-              '[Premium] Wallet authorized:',
-              authResult.accounts[0]?.address
-            );
-
-            const results = await wallet.signAndSendTransactions({
-              transactions: [transaction],
-            });
-
-            if (!results || results.length === 0) {
-              throw new Error('No transaction result returned from wallet');
-            }
-
-            return results[0] as string;
-          });
+          // Use the useMobileWallet hook's signAndSendTransaction
+          const signature = await signAndSendTransaction(transaction, 0);
+          return signature;
         }
       );
 

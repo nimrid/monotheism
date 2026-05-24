@@ -72,7 +72,7 @@ Before starting, establish configuration environments for the mobile client and 
 EXPO_PUBLIC_SOLANA_RPC=https://solana-mainnet.g.alchemy.com/v2/your-api-key # Or public Solana RPC
 EXPO_PUBLIC_SKR_MINT=SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3
 EXPO_PUBLIC_SKR_DECIMALS=6
-EXPO_PUBLIC_RECIPIENT_WALLET=GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED
+EXPO_PUBLIC_RECIPIENT_WALLET=
 ```
 
 **Backend Environment (`/backend/.env`):**

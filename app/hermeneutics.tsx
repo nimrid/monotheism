@@ -1,7 +1,7 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useSolanaPayment } from '@/hooks/useSolanaPayment';
-import { transact } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
+import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -22,12 +22,7 @@ const RECIPIENT_WALLET = 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
 // Cost per video in SKR (replace with your pricing decision)
 const WATCH_VIDEO_COST_SKR = 5; // 5 SKR per video
 
-// Identity used for Mobile Wallet Adapter authorization
-const APP_IDENTITY = {
-  name: 'Monotheism',
-  uri: 'https://monotheism.app',
-  icon: 'favicon.ico',
-};
+
 
 type Sermon = {
   id: string;
@@ -131,6 +126,7 @@ export default function HermeneuticsScreen() {
   const { colors } = useTheme();
   const router = useRouter();
   const { paying, payWithSKR } = useSolanaPayment();
+  const { signAndSendTransaction } = useMobileWallet();
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const [payingVideoId, setPayingVideoId] = useState<string | null>(null);
 
@@ -144,24 +140,8 @@ export default function HermeneuticsScreen() {
         RECIPIENT_WALLET,
         WATCH_VIDEO_COST_SKR,
         async (transaction) => {
-          return await transact(async (wallet: any) => {
-            const authResult = await wallet.authorize({
-              cluster: 'mainnet-beta',
-              identity: APP_IDENTITY,
-            });
-
-            console.log('[Hermeneutics] Wallet authorized:', authResult.accounts[0]?.address);
-
-            const results = await wallet.signAndSendTransactions({
-              transactions: [transaction],
-            });
-
-            if (!results || results.length === 0) {
-              throw new Error('No transaction result returned from wallet');
-            }
-
-            return results[0] as string;
-          });
+          const signature = await signAndSendTransaction(transaction, 0);
+          return signature;
         }
       );
 

@@ -1,3 +1,4 @@
+import { MobileWalletProvider } from '@wallet-ui/react-native-web3js';
 import { clusterApiUrl } from '@solana/web3.js';
 import 'react-native-reanimated';
 
@@ -9,26 +10,17 @@ export const unstable_settings = {
   anchor: '(tabs)',
 };
 
-// Lazy load MobileWalletProvider to prevent crashes if native module is not available
-let MobileWalletProviderComponent: any = ({ children }: any) => children;
-try {
-  const walletModule = require('@wallet-ui/react-native-web3js');
-  MobileWalletProviderComponent = walletModule.MobileWalletProvider;
-} catch (e) {
-  console.warn('SolanaMobileWalletAdapter not available:', e);
-}
+const chain = 'solana:mainnet';
+const endpoint = clusterApiUrl('mainnet-beta');
+const identity = {
+  name: 'Monotheism',
+  uri: 'https://monotheism.app',
+  icon: 'favicon.ico',
+};
 
 export default function RootLayout() {
-  const chain = 'solana:mainnet';
-  const endpoint = clusterApiUrl('mainnet-beta');
-  const identity = {
-    name: 'Monotheism',
-    uri: 'https://monotheism.com',
-    icon: 'favicon.ico',
-  };
-
   return (
-    <MobileWalletProviderComponent
+    <MobileWalletProvider
       chain={chain}
       endpoint={endpoint}
       identity={identity}
@@ -38,6 +30,6 @@ export default function RootLayout() {
           <RootLayoutNav />
         </UserProvider>
       </ThemeProvider>
-    </MobileWalletProviderComponent>
+    </MobileWalletProvider>
   );
 }

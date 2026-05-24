@@ -83,17 +83,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   };
 
   const connectWallet = async (address: string) => {
+    // Always persist locally first — this is the source of truth for wallet state
+    await AsyncStorage.setItem(WALLET_KEY, address);
+    setWalletAddress(address);
+
+    // Attempt to sync with the backend + subscription (non-fatal if offline)
     try {
-      console.log('UserContext: Connecting wallet with address:', address);
-      console.log('UserContext: Address length:', address.length);
-
-      // Save to local storage
-      await AsyncStorage.setItem(WALLET_KEY, address);
-      setWalletAddress(address);
-      console.log('UserContext: Saved to AsyncStorage');
-
-      // Save to database + sync subscription (parallel)
-      console.log('UserContext: Calling API to save to database...');
       const [response] = await Promise.all([
         fetch(`${API_URL}/users/connect-wallet`, {
           method: 'POST',
@@ -103,20 +98,15 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         syncSubscriptionForWallet(address),
       ]);
 
-      console.log('UserContext: API response status:', response.status);
-
       if (response.ok) {
         const userData = await response.json();
-        console.log('UserContext: User data from API:', userData);
         setUser(userData);
-        console.log('Wallet connected and saved to database');
       } else {
-        const errorText = await response.text();
-        console.error('Failed to save wallet to database:', errorText);
+        console.warn('UserContext: Backend wallet sync failed (non-fatal):', response.status);
       }
     } catch (error) {
-      console.error('Error connecting wallet:', error);
-      throw error;
+      // Network unavailable or backend down — wallet is already saved locally, so this is fine
+      console.warn('UserContext: Backend unreachable, wallet saved locally only:', error instanceof Error ? error.message : error);
     }
   };
 

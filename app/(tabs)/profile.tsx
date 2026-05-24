@@ -6,9 +6,10 @@ import { DayStreak, getDayStreak } from '@/utils/day-streak';
 import { fetchSKRBalance, TokenBalance } from '@/utils/token-balance';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
+import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function ProfileScreen() {
@@ -18,9 +19,12 @@ export default function ProfileScreen() {
   const [connecting, setConnecting] = useState(false);
   const [activePlanId, setActivePlanId] = useState<string | null>(null);
   const [dayStreak, setDayStreak] = useState<DayStreak | null>(null);
-  const [walletNotAvailable] = useState(true); // Wallet is not available in dev build
   const [skrBalance, setSkrBalance] = useState<TokenBalance | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
+  const isFetchingBalance = useRef(false);
+
+  // Solana Mobile Wallet Adapter hook — called at top level per React rules
+  const { account, connect, disconnect } = useMobileWallet();
 
   // Use progress tracking hook
   const { stats, streak, loading } = useReadingProgress(activePlanId);
@@ -30,20 +34,27 @@ export default function ProfileScreen() {
     loadDayStreak();
   }, []);
 
+  // Balance is loaded by useFocusEffect below — no separate useEffect needed.
+
+  // When the MWA hook reports a connected account, sync it to our UserContext
   useEffect(() => {
-    if (walletAddress) {
-      loadSKRBalance();
+    if (account?.address && !walletAddress) {
+      const addr = account.address.toBase58();
+      // connectWallet (saveWallet) is non-fatal — wallet is persisted locally even if backend is unreachable
+      saveWallet(addr).catch((e: any) =>
+        console.warn('Failed to persist wallet address:', e)
+      );
     }
-  }, [walletAddress]);
+  }, [account]);
 
   useFocusEffect(
-    React.useCallback(() => {
+    useCallback(() => {
       loadActivePlanId();
       loadDayStreak();
       if (walletAddress) {
         loadSKRBalance();
       }
-    }, [walletAddress])
+    }, [walletAddress, loadSKRBalance])
   );
 
   const loadDayStreak = async () => {
@@ -60,9 +71,9 @@ export default function ProfileScreen() {
     }
   };
 
-  const loadSKRBalance = async () => {
-    if (!walletAddress) return;
-    
+  const loadSKRBalance = useCallback(async () => {
+    if (!walletAddress || isFetchingBalance.current) return;
+    isFetchingBalance.current = true;
     setLoadingBalance(true);
     try {
       const balance = await fetchSKRBalance(walletAddress);
@@ -71,59 +82,47 @@ export default function ProfileScreen() {
       console.error('Error loading SKR balance:', error);
     } finally {
       setLoadingBalance(false);
+      isFetchingBalance.current = false;
     }
-  };
+  }, [walletAddress]);
 
   const handleConnectWallet = async () => {
-    if (walletNotAvailable) {
-      Alert.alert(
-        'Wallet Not Available',
-        'The Solana wallet adapter is not available in this build. Please rebuild the development build with native modules linked.'
-      );
-      return;
-    }
-
     setConnecting(true);
     try {
-      // Use the useMobileWallet hook's connect method
-      const { connect } = useMobileWallet();
       await connect();
-      
-      // Get the connected account address
-      const { account } = useMobileWallet();
+
+      // After connect(), `account` will update on next render via the hook.
+      // We also handle it in the useEffect above, but give immediate feedback:
       if (account?.address) {
         const addressString = account.address.toBase58();
-        
+
         console.log('Connected wallet address:', addressString);
-        console.log('Address length:', addressString.length);
-        
-        // Validate address format (Solana addresses are 32-44 characters)
-        if (addressString.length < 32 || addressString.length > 44) {
-          console.error('Invalid address length:', addressString.length);
-          throw new Error('Invalid wallet address format');
-        }
-        
-        // Save wallet using context (saves to both AsyncStorage and database)
+
         await saveWallet(addressString);
-        
+
         Alert.alert(
-          'Success', 
-          `Wallet connected!\n\nFull address: ${addressString}\n\nShort: ${addressString.slice(0, 8)}...${addressString.slice(-8)}`
+          'Success',
+          `Wallet connected!\n\nAddress: ${addressString.slice(0, 8)}...${addressString.slice(-8)}`
         );
+      } else {
+        // account updates asynchronously — the useEffect will handle persistence
+        Alert.alert('Success', 'Wallet connection initiated. Your address will appear shortly.');
       }
     } catch (error: any) {
       console.error('Wallet connection error:', error);
-      Alert.alert('Connection Failed', error.message || 'Failed to connect wallet');
+      const msg = error?.message ?? '';
+      if (msg.includes('rejected') || msg.includes('cancelled') || msg.includes('canceled')) {
+        Alert.alert('Cancelled', 'Wallet connection was cancelled.');
+      } else {
+        Alert.alert('Connection Failed', msg || 'Failed to connect wallet. Make sure you have a Solana wallet app installed.');
+      }
     } finally {
       setConnecting(false);
     }
   };
 
   const handleDisconnectWallet = async () => {
-    if (walletNotAvailable) return;
-
     try {
-      const { disconnect } = useMobileWallet();
       await disconnect();
       await removeWallet();
       Alert.alert('Disconnected', 'Wallet disconnected successfully');
@@ -230,34 +229,7 @@ export default function ProfileScreen() {
         )}
       </View>
 
-      {/* Stats Cards */}
-      <View style={styles.statsContainer}>
-        <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-          <Text style={styles.statIcon}>🔥</Text>
-          <Text style={[styles.statNumber, { color: colors.text }]}>
-            {dayStreak?.currentStreak || 0}
-          </Text>
-          <Text style={[styles.statLabel, { color: colors.tertiaryText }]}>Day Streak</Text>
-        </View>
-        
-        <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-          <Text style={styles.statIcon}>📚</Text>
-          <Text style={[styles.statNumber, { color: colors.text }]}>
-            {loading ? '...' : stats?.completedChapters || 0}
-          </Text>
-          <Text style={[styles.statLabel, { color: colors.tertiaryText }]}>Chapters Read</Text>
-        </View>
-        
-        <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-          <Text style={styles.statIcon}>🏆</Text>
-          <Text style={[styles.statNumber, { color: colors.text }]}>
-            {dayStreak?.longestStreak || 0}
-          </Text>
-          <Text style={[styles.statLabel, { color: colors.tertiaryText }]}>Best Streak</Text>
-        </View>
-      </View>
-
-      {/* SKR Balance Card */}
+      {/* SKR Balance Card — shown above stats when wallet is connected */}
       {walletAddress && (
         <View style={[styles.skrCard, { backgroundColor: colors.card }]}>
           <View style={styles.skrHeader}>
@@ -265,7 +237,7 @@ export default function ProfileScreen() {
               <Text style={styles.skrIcon}>💰</Text>
               <Text style={[styles.skrTitle, { color: colors.text }]}>SKR Balance</Text>
             </View>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.refreshButton, { backgroundColor: colors.buttonBg }]}
               onPress={loadSKRBalance}
               disabled={loadingBalance}
@@ -273,7 +245,7 @@ export default function ProfileScreen() {
               <IconSymbol name="arrow.clockwise" size={16} color={colors.primary} />
             </TouchableOpacity>
           </View>
-          
+
           {loadingBalance ? (
             <ActivityIndicator size="small" color={colors.primary} />
           ) : skrBalance ? (
@@ -292,6 +264,33 @@ export default function ProfileScreen() {
           )}
         </View>
       )}
+
+      {/* Stats Cards */}
+      <View style={styles.statsContainer}>
+        <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+          <Text style={styles.statIcon}>🔥</Text>
+          <Text style={[styles.statNumber, { color: colors.text }]}>
+            {dayStreak?.currentStreak || 0}
+          </Text>
+          <Text style={[styles.statLabel, { color: colors.tertiaryText }]}>Day Streak</Text>
+        </View>
+
+        <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+          <Text style={styles.statIcon}>📚</Text>
+          <Text style={[styles.statNumber, { color: colors.text }]}>
+            {loading ? '...' : stats?.completedChapters || 0}
+          </Text>
+          <Text style={[styles.statLabel, { color: colors.tertiaryText }]}>Chapters Read</Text>
+        </View>
+
+        <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+          <Text style={styles.statIcon}>🏆</Text>
+          <Text style={[styles.statNumber, { color: colors.text }]}>
+            {dayStreak?.longestStreak || 0}
+          </Text>
+          <Text style={[styles.statLabel, { color: colors.tertiaryText }]}>Best Streak</Text>
+        </View>
+      </View>
 
       {/* Reading Progress Card */}
       {activePlanId && stats && (

@@ -6,7 +6,7 @@ import { checkTrialStatus, createReadingPlanInDB, fetchReadingPlans, getReadingP
 import { saveReadingPlanPreferences } from '@/utils/reading-plan';
 import { syncSubscriptionWithBackend } from '@/utils/subscription';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { transact } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
+import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -14,18 +14,14 @@ import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, Touc
 const RECIPIENT_WALLET = 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
 const COST_PER_DAY_SKR = 10;
 
-// Identity used for Mobile Wallet Adapter authorization
-const APP_IDENTITY = {
-  name: 'Monotheism',
-  uri: 'https://monotheism.app',
-  icon: 'favicon.ico',
-};
+
 
 export default function ReadingPlanSetupScreen() {
   const { colors } = useTheme();
   const { walletAddress } = useUser();
   const router = useRouter();
   const { paying, payWithSKR } = useSolanaPayment();
+  const { signAndSendTransaction } = useMobileWallet();
   const [days, setDays] = useState('30');
   const [age, setAge] = useState('');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -123,26 +119,8 @@ export default function ReadingPlanSetupScreen() {
         RECIPIENT_WALLET,
         totalCost,
         async (transaction) => {
-          return await transact(async (wallet: any) => {
-            // Authorize the app with the wallet
-            const authResult = await wallet.authorize({
-              cluster: 'mainnet-beta',
-              identity: APP_IDENTITY,
-            });
-
-            console.log('[ReadingPlan] Wallet authorized:', authResult.accounts[0]?.address);
-
-            // Sign and send the pre-built transaction
-            const results = await wallet.signAndSendTransactions({
-              transactions: [transaction],
-            });
-
-            if (!results || results.length === 0) {
-              throw new Error('No transaction result returned from wallet');
-            }
-
-            return results[0] as string;
-          });
+          const signature = await signAndSendTransaction(transaction, 0);
+          return signature;
         }
       );
 
