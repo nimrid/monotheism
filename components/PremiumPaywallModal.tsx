@@ -38,7 +38,7 @@ import {
 // ─── Config ───────────────────────────────────────────────────────────────────
 const RECIPIENT_WALLET =
   process.env.EXPO_PUBLIC_RECIPIENT_WALLET ?? 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
-const PREMIUM_COST_SKR = 10;
+const PREMIUM_COST_SKR = 400;
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 type Props = {
@@ -219,6 +219,8 @@ const FEATURES = [
   { icon: '📖', label: '373 Bible Stories' },
   { icon: '✝️', label: 'All Parables of Jesus' },
   { icon: '📚', label: "Bible Dictionary" },
+  { icon: '📺', label: 'Hermeneutics Video Sermons' },
+  { icon: '📅', label: 'Custom Reading Plans' },
   { icon: '♾️', label: 'Lifetime Access' },
 ];
 

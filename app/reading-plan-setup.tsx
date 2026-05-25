@@ -1,18 +1,14 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
-import { useSolanaPayment } from '@/hooks/useSolanaPayment';
+import PremiumPaywallModal from '@/components/PremiumPaywallModal';
+import { hasPremiumAccess } from '@/utils/subscription';
 import { checkTrialStatus, createReadingPlanInDB, fetchReadingPlans, getReadingPlanById, SavedReadingPlan, TrialStatus } from '@/utils/database';
 import { saveReadingPlanPreferences } from '@/utils/reading-plan';
-import { syncSubscriptionWithBackend } from '@/utils/subscription';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-
-const RECIPIENT_WALLET = 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
-const COST_PER_DAY_SKR = 10;
 
 
 
@@ -20,8 +16,6 @@ export default function ReadingPlanSetupScreen() {
   const { colors } = useTheme();
   const { walletAddress } = useUser();
   const router = useRouter();
-  const { paying, payWithSKR } = useSolanaPayment();
-  const { signAndSendTransaction } = useMobileWallet();
   const [days, setDays] = useState('30');
   const [age, setAge] = useState('');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -30,11 +24,19 @@ export default function ReadingPlanSetupScreen() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [trialStatus, setTrialStatus] = useState<TrialStatus | null>(null);
+  const [isPremium, setIsPremium] = useState(false);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
 
   useEffect(() => {
     loadSavedPlans();
     loadTrialStatus();
+    checkPremium();
   }, [walletAddress]);
+
+  const checkPremium = async () => {
+    const premium = await hasPremiumAccess();
+    setIsPremium(premium);
+  };
 
   const loadTrialStatus = async () => {
     if (!walletAddress) return;
@@ -78,77 +80,14 @@ export default function ReadingPlanSetupScreen() {
       return;
     }
 
-    // Check if payment is needed
-    const needsPayment = trialStatus && !trialStatus.isTrialAvailable;
-    const totalCost = daysNum * COST_PER_DAY_SKR;
+    // Check if payment is needed (if no trial and not premium)
+    const needsPayment = trialStatus && !trialStatus.isTrialAvailable && !isPremium;
 
     if (needsPayment) {
-      // Show payment confirmation
-      Alert.alert(
-        'Payment Required',
-        `This reading plan costs ${totalCost} SKR (${COST_PER_DAY_SKR} SKR per day × ${daysNum} days).\n\nProceed with payment?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Pay & Create', onPress: () => handlePaymentAndCreate(daysNum, ageNum, totalCost) },
-        ]
-      );
+      setShowPremiumModal(true);
     } else {
-      // Use trial
+      // Use trial or free premium access
       await createPlanWithoutPayment(daysNum, ageNum);
-    }
-  };
-
-  const handlePaymentAndCreate = async (daysNum: number, ageNum: number, totalCost: number) => {
-    if (!walletAddress) {
-      Alert.alert(
-        'Wallet Required',
-        'Please connect your wallet first.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Go to Profile', onPress: () => router.push('/(tabs)/profile') },
-        ]
-      );
-      return;
-    }
-
-    try {
-      console.log('[ReadingPlan] Starting SKR payment:', totalCost, 'SKR');
-
-      // Provide the Mobile Wallet Adapter signer to the payment hook
-      const result = await payWithSKR(
-        RECIPIENT_WALLET,
-        totalCost,
-        async (transaction) => {
-          const signature = await signAndSendTransaction(transaction, 0);
-          return signature;
-        }
-      );
-
-      console.log('[ReadingPlan] Payment confirmed. Signature:', result.signature);
-
-      // Sync subscription to backend (non-blocking on failure)
-      syncSubscriptionWithBackend(walletAddress, result.signature, totalCost).catch(
-        (e) => console.warn('[ReadingPlan] Backend sync failed (non-fatal):', e)
-      );
-
-      // Create plan with payment signature
-      await createPlanWithPayment(daysNum, ageNum, result.signature);
-    } catch (error: any) {
-      console.error('[ReadingPlan] Payment failed:', error);
-      const code = error?.code ?? '';
-      if (code === 'WALLET_NOT_CONNECTED') return; // alert already shown by hook
-      if (code === 'INSUFFICIENT_BALANCE') {
-        Alert.alert('Insufficient Balance', error.message);
-        return;
-      }
-      if (code === 'USER_REJECTED') {
-        Alert.alert('Cancelled', 'Transaction was cancelled.');
-        return;
-      }
-      Alert.alert(
-        'Payment Failed',
-        error.message ?? 'Unable to process payment. Please try again.'
-      );
     }
   };
 
@@ -194,47 +133,6 @@ export default function ReadingPlanSetupScreen() {
     }
   };
 
-  const createPlanWithPayment = async (daysNum: number, ageNum: number, paymentTxSignature: string) => {
-    setCreating(true);
-    try {
-      // Save to database with payment signature
-      const savedPlan = await createReadingPlanInDB({
-        walletAddress: walletAddress!,
-        name: planName.trim(),
-        days: daysNum,
-        startDate,
-        age: ageNum,
-        paymentTxSignature,
-      });
-
-      // Also save to local storage for backward compatibility
-      await saveReadingPlanPreferences({
-        days: daysNum,
-        startDate,
-        age: ageNum,
-        createdAt: new Date().toISOString(),
-      });
-
-      // Save the active plan ID for progress tracking
-      await AsyncStorage.setItem('@active_plan_id', savedPlan.id);
-
-      Alert.alert('Success', 'Reading plan created successfully!');
-      
-      // Reload plans
-      await loadSavedPlans();
-      
-      // Clear form
-      setPlanName('');
-      setDays('30');
-      setAge('');
-      setStartDate(new Date().toISOString().split('T')[0]);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to create reading plan. Please try again.');
-      console.error(error);
-    } finally {
-      setCreating(false);
-    }
-  };
 
   const handleLoadPlan = async (plan: SavedReadingPlan) => {
     if (!walletAddress) {
@@ -343,9 +241,9 @@ export default function ReadingPlanSetupScreen() {
           </View>
 
           {/* Trial Status Card */}
-          {trialStatus && (
+          {trialStatus && !isPremium && (
             <View style={[styles.trialCard, { backgroundColor: trialStatus.isTrialAvailable ? '#e6f7e6' : '#fff3e6' }]}>
-              <Text style={styles.trialIcon}>{trialStatus.isTrialAvailable ? '🎁' : '💰'}</Text>
+              <Text style={styles.trialIcon}>{trialStatus.isTrialAvailable ? '🎁' : '⭐'}</Text>
               <View style={styles.trialContent}>
                 {trialStatus.isTrialAvailable ? (
                   <>
@@ -359,10 +257,10 @@ export default function ReadingPlanSetupScreen() {
                 ) : (
                   <>
                     <Text style={[styles.trialTitle, { color: '#ff9500' }]}>
-                      Premium Plans
+                      Premium Feature
                     </Text>
                     <Text style={[styles.trialText, { color: '#ff9500' }]}>
-                      {trialStatus.costPerDay} SKR per day
+                      Unlock Premium to create unlimited plans
                     </Text>
                   </>
                 )}
@@ -454,30 +352,17 @@ export default function ReadingPlanSetupScreen() {
             </View>
           </View>
 
-          {/* Cost Display */}
-          {days && (
-            <View style={[styles.costCard, { backgroundColor: colors.card }]}>
-              <Text style={[styles.costLabel, { color: colors.secondaryText }]}>
-                {trialStatus?.isTrialAvailable ? 'Free (Trial)' : `Cost: ${parseInt(days) * COST_PER_DAY_SKR} SKR`}
-              </Text>
-              {!trialStatus?.isTrialAvailable && (
-                <Text style={[styles.costDetail, { color: colors.tertiaryText }]}>
-                  {COST_PER_DAY_SKR} SKR × {days} days
-                </Text>
-              )}
-            </View>
-          )}
 
           {/* Create Button */}
           <TouchableOpacity 
-            style={[styles.createButton, (creating || paying) && styles.createButtonDisabled]} 
+            style={[styles.createButton, creating && styles.createButtonDisabled]} 
             onPress={handleCreatePlan}
-            disabled={creating || paying}
+            disabled={creating}
           >
-            {creating || paying ? (
+            {creating ? (
               <>
                 <ActivityIndicator size="small" color="#fff" />
-                <Text style={styles.createButtonText}>{paying ? 'Processing Payment...' : 'Creating...'}</Text>
+                <Text style={styles.createButtonText}>Creating...</Text>
               </>
             ) : (
               <>
@@ -487,6 +372,16 @@ export default function ReadingPlanSetupScreen() {
             )}
           </TouchableOpacity>
         </ScrollView>
+
+        {/* Premium Paywall Modal */}
+        <PremiumPaywallModal
+          visible={showPremiumModal}
+          onClose={() => setShowPremiumModal(false)}
+          onSuccess={() => {
+            setIsPremium(true);
+            createPlanWithoutPayment(parseInt(days), parseInt(age));
+          }}
+        />
       </View>
     </>
   );

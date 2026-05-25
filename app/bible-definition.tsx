@@ -207,12 +207,7 @@ export default function BibleDefinitionScreen() {
             )}
           </View>
 
-          {/* Payment Info */}
-          <View style={styles.paymentInfo}>
-            <Text style={styles.paymentInfoText}>
-              💰 Premium Access: 200 SKR one-time payment
-            </Text>
-          </View>
+          
 
           <TouchableOpacity
             style={[styles.searchButton, (loading || paying) && styles.searchButtonDisabled]}
@@ -325,7 +320,7 @@ export default function BibleDefinitionScreen() {
                     <View style={styles.wordInfo}>
                       <Text style={[styles.wordTitle, { color: colors.text }]}>{(result as DefinitionResult).word}</Text>
                       <Text style={[styles.wordSubtitle, { color: colors.secondaryText }]}>
-                        Smith's Bible Dictionary
+                        Bible Dictionary
                       </Text>
                     </View>
                   </View>
@@ -392,11 +387,9 @@ export default function BibleDefinitionScreen() {
             <View style={styles.infoContent}>
               <Text style={[styles.infoTitle, { color: colors.text }]}>About This Dictionary</Text>
               <Text style={[styles.infoText, { color: colors.secondaryText }]}>
-                Smith's Bible Dictionary provides detailed definitions of biblical terms, names, places, and concepts to enhance your understanding of Scripture.
+                Bible Dictionary provides detailed definitions of biblical terms, names, places, and concepts to enhance your understanding of Scripture.
               </Text>
-              <Text style={[styles.infoText, { color: colors.secondaryText, marginTop: 8 }]}>
-                Premium access costs 200 SKR one-time for lifetime access to all dictionary searches, Bible stories, and parables.
-              </Text>
+              
             </View>
           </View>
         )}

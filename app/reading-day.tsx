@@ -4,7 +4,7 @@ import { useReadingProgress } from '@/hooks/useReadingProgress';
 import { BOOK_ID_MAP } from '@/utils/verse-search';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -14,7 +14,14 @@ import {
     Text,
     TouchableOpacity,
     View,
+    FlatList,
+    Share,
+    useWindowDimensions,
+    ViewToken
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Clipboard from 'expo-clipboard';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const RAPIDAPI_KEY = process.env.EXPO_PUBLIC_RAPIDAPI_KEY;
 const RAPIDAPI_HOST = process.env.EXPO_PUBLIC_RAPIDAPI_HOST;
@@ -39,6 +46,17 @@ type ChapterContent = {
   verses: Array<{ v: string; t: string }>;
 };
 
+// Dark aesthetic gradients for Gen Z TikTok doom-scrolling vibe
+const GRADIENTS = [
+  ['#0F2027', '#203A43', '#2C5364'],
+  ['#141E30', '#243B55'],
+  ['#16222A', '#3A6073'],
+  ['#000000', '#434343'],
+  ['#232526', '#414345'],
+  ['#0f0c29', '#302b63', '#24243e'],
+  ['#1e130c', '#9a8478']
+];
+
 export default function ReadingDayScreen() {
   const { colors } = useTheme();
   const router = useRouter();
@@ -50,8 +68,9 @@ export default function ReadingDayScreen() {
   const [chapterContent, setChapterContent] = useState<ChapterContent | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
   const [readChapters, setReadChapters] = useState<Set<string>>(new Set());
-  const [scrollPosition, setScrollPosition] = useState(0);
-  const [contentHeight, setContentHeight] = useState(0);
+  
+  const { height, width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
   // Use progress tracking hook
   const { 
@@ -131,7 +150,6 @@ export default function ReadingDayScreen() {
     setLoadingContent(true);
     setSelectedChapter(chapter);
     setChapterContent(null);
-    setScrollPosition(0);
 
     try {
       const response = await fetch(
@@ -192,39 +210,6 @@ export default function ReadingDayScreen() {
     }
   };
 
-  const handleScroll = (event: any) => {
-    if (!planId || !selectedChapter) return;
-
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    setScrollPosition(contentOffset.y);
-    setContentHeight(contentSize.height);
-
-    // Calculate progress percentage
-    const scrollHeight = contentSize.height - layoutMeasurement.height;
-    const progressPercentage = Math.min(
-      100,
-      Math.max(0, Math.round((contentOffset.y / scrollHeight) * 100))
-    );
-
-    // Update progress every 10%
-    if (progressPercentage % 10 === 0) {
-      updatePosition({
-        chapterId: selectedChapter.id,
-        bookName: selectedChapter.bookName,
-        bookId: selectedChapter.bookId,
-        chapterNumber: parseInt(selectedChapter.chapterId),
-        dayNumber: parseInt(dayNumber as string),
-        progressPercentage,
-        lastPosition: contentOffset.y,
-      });
-    }
-
-    // Auto-complete at 95%
-    if (progressPercentage >= 95 && !readChapters.has(selectedChapter.id)) {
-      markChapterAsRead(selectedChapter.id);
-    }
-  };
-
   const closeChapter = () => {
     if (selectedChapter && !readChapters.has(selectedChapter.id)) {
       markChapterAsRead(selectedChapter.id);
@@ -250,6 +235,114 @@ export default function ReadingDayScreen() {
   };
 
   const allChaptersRead = readChapters.size === chapters.length && chapters.length > 0;
+
+  // -- Doom Scrolling Viewability Config --
+  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    if (!planId || !selectedChapter || !chapterContent || viewableItems.length === 0) return;
+
+    const index = viewableItems[0].index || 0;
+    const total = chapterContent.verses.length;
+    const progressPercentage = Math.min(100, Math.round(((index + 1) / total) * 100));
+
+    // Update progress every 10%
+    if (progressPercentage % 10 === 0) {
+      updatePosition({
+        chapterId: selectedChapter.id,
+        bookName: selectedChapter.bookName,
+        bookId: selectedChapter.bookId,
+        chapterNumber: parseInt(selectedChapter.chapterId),
+        dayNumber: parseInt(dayNumber as string),
+        progressPercentage,
+        lastPosition: index,
+      });
+    }
+
+    // Auto-complete at 95%
+    if (progressPercentage >= 95 && !readChapters.has(selectedChapter.id)) {
+      markChapterAsRead(selectedChapter.id);
+    }
+  }, [planId, selectedChapter, chapterContent, readChapters]);
+
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
+
+  const renderVerseItem = ({ item, index }: { item: { v: string; t: string }; index: number }) => {
+    const verseNum = item.v || '';
+    const verseText = item.t || '';
+    const gradient = GRADIENTS[index % GRADIENTS.length];
+    
+    return (
+      <View style={{ height, width }}>
+        <LinearGradient
+          colors={gradient}
+          style={StyleSheet.absoluteFillObject}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        />
+        
+        {/* Centered Verse Text (Doom scrolling aesthetic) */}
+        <ScrollView 
+          contentContainerStyle={[styles.verseScrollContent, {
+            paddingTop: Math.max(insets.top, 40) + 60,
+            paddingBottom: insets.bottom + 120,
+          }]}
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.quoteMark}>"</Text>
+          <Text style={styles.tiktokVerseText}>{verseText}</Text>
+          <Text style={[styles.quoteMark, { textAlign: 'right', marginTop: -10 }]}>"</Text>
+          <Text style={styles.verseReference}>
+            — {selectedChapter?.bookName} {selectedChapter?.chapterId}:{verseNum}
+          </Text>
+        </ScrollView>
+
+        {/* Floating Action Buttons */}
+        <View style={[styles.floatingActionContainer, { bottom: insets.bottom + 80 }]}>
+          <TouchableOpacity style={styles.actionButton} onPress={() => {
+            Clipboard.setStringAsync(`"${verseText}"\n\n— ${selectedChapter?.bookName} ${selectedChapter?.chapterId}:${verseNum}`);
+            Alert.alert('Copied', 'Verse copied to clipboard');
+          }}>
+            <View style={styles.iconCircle}>
+              <IconSymbol name="doc.on.doc" size={24} color="#fff" />
+            </View>
+            <Text style={styles.actionText}>Copy</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity style={styles.actionButton} onPress={() => {
+            Share.share({
+              message: `"${verseText}"\n\n— ${selectedChapter?.bookName} ${selectedChapter?.chapterId}:${verseNum}`
+            });
+          }}>
+            <View style={styles.iconCircle}>
+              <IconSymbol name="square.and.arrow.up" size={26} color="#fff" />
+            </View>
+            <Text style={styles.actionText}>Share</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Bottom Progress Indicator */}
+        <View style={[styles.progressOverlay, { paddingBottom: insets.bottom + 20 }]}>
+          <View style={styles.progressBarBg}>
+            <View style={[styles.progressBarFill, { width: `${((index + 1) / chapterContent!.verses.length) * 100}%` }]} />
+          </View>
+          <Text style={styles.progressText}>Verse {index + 1} of {chapterContent!.verses.length}</Text>
+          
+          {/* Show mark as read explicitly on the last verse just in case */}
+          {index === chapterContent!.verses.length - 1 && !readChapters.has(selectedChapter!.id) && (
+            <TouchableOpacity
+              style={styles.markReadButton}
+              onPress={() => {
+                markChapterAsRead(selectedChapter!.id);
+                closeChapter();
+              }}
+            >
+              <IconSymbol name="checkmark.circle" size={20} color="#fff" />
+              <Text style={styles.markReadButtonText}>Mark as Read</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    );
+  };
 
   return (
     <>
@@ -320,62 +413,49 @@ export default function ReadingDayScreen() {
           ))}
         </ScrollView>
 
-        {/* Chapter Content Modal */}
+        {/* Chapter Content Modal - TikTok Style */}
         <Modal
           visible={!!selectedChapter || loadingContent}
           animationType="slide"
           onRequestClose={closeChapter}
         >
-          <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
-            {/* Modal Header */}
-            <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-              <TouchableOpacity onPress={closeChapter} style={styles.closeButton}>
-                <IconSymbol name="xmark.circle.fill" size={32} color={colors.tertiaryText} />
-              </TouchableOpacity>
-              {selectedChapter && (
-                <View style={styles.modalTitleContainer}>
-                  <Text style={[styles.modalTitle, { color: colors.text }]}>
-                    {selectedChapter.bookName} {selectedChapter.chapterId}
-                  </Text>
-                  <Text style={[styles.modalSubtitle, { color: colors.tertiaryText }]}>KJV</Text>
-                </View>
-              )}
-            </View>
-
-            {/* Modal Content */}
+          <View style={[styles.modalContainer, { backgroundColor: '#000' }]}>
             {loadingContent ? (
               <View style={styles.modalLoading}>
-                <ActivityIndicator size="large" color={colors.primary} />
+                <ActivityIndicator size="large" color="#fff" />
               </View>
             ) : chapterContent ? (
-              <ScrollView 
-                style={styles.modalScroll} 
-                contentContainerStyle={styles.modalContent}
-                onScroll={handleScroll}
-                scrollEventThrottle={1000}
-              >
-                {chapterContent.verses.map((verse, index) => (
-                  <View key={index} style={styles.verseRow}>
-                    <Text style={[styles.verseNumber, { color: colors.primary }]}>{verse.v}</Text>
-                    <Text style={[styles.verseText, { color: colors.text }]}>{verse.t}</Text>
-                  </View>
-                ))}
-
-                {/* Mark as Read Button */}
-                {selectedChapter && !readChapters.has(selectedChapter.id) && (
-                  <TouchableOpacity
-                    style={styles.markReadButton}
-                    onPress={() => {
-                      markChapterAsRead(selectedChapter.id);
-                      closeChapter();
-                    }}
-                  >
-                    <IconSymbol name="checkmark.circle" size={20} color="#fff" />
-                    <Text style={styles.markReadButtonText}>Mark as Read</Text>
-                  </TouchableOpacity>
-                )}
-              </ScrollView>
+              <FlatList
+                data={chapterContent.verses}
+                renderItem={renderVerseItem}
+                keyExtractor={(_, index) => index.toString()}
+                pagingEnabled
+                showsVerticalScrollIndicator={false}
+                snapToAlignment="start"
+                decelerationRate="fast"
+                onViewableItemsChanged={onViewableItemsChanged}
+                viewabilityConfig={viewabilityConfig}
+                bounces={false}
+                initialNumToRender={3}
+                maxToRenderPerBatch={3}
+                windowSize={5}
+              />
             ) : null}
+
+            {/* Floating Top Header (Transparent) */}
+            <View style={[styles.floatingHeader, { paddingTop: Math.max(insets.top, 20) }]}>
+              <TouchableOpacity onPress={closeChapter} style={styles.backButton}>
+                <IconSymbol name="xmark" size={28} color="#fff" />
+              </TouchableOpacity>
+              <View style={styles.modalTitleContainer}>
+                {selectedChapter && (
+                  <Text style={styles.headerTitle} numberOfLines={1}>
+                    {selectedChapter.bookName} {selectedChapter.chapterId}
+                  </Text>
+                )}
+              </View>
+              <View style={{ width: 44 }} />
+            </View>
           </View>
         </Modal>
       </View>
@@ -397,10 +477,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
+    padding: 8,
+    width: 44,
   },
   headerContent: {
     flex: 1,
@@ -523,63 +601,125 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
   },
-  modalHeader: {
-    paddingTop: 60,
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-  },
-  closeButton: {
-    alignSelf: 'flex-end',
-    marginBottom: 12,
-  },
-  modalTitleContainer: {
-    alignItems: 'center',
-  },
-  modalTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  modalSubtitle: {
-    fontSize: 14,
-  },
   modalLoading: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalScroll: {
-    flex: 1,
-  },
-  modalContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  verseRow: {
+  
+  // -- Doom Scrolling Styles --
+  floatingHeader: {
+    position: 'absolute',
+    top: 0,
+    width: '100%',
     flexDirection: 'row',
-    marginBottom: 16,
-    gap: 12,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    zIndex: 10,
+    backgroundColor: 'rgba(0,0,0,0.2)', // slight dark gradient effect at top
   },
-  verseNumber: {
-    fontSize: 14,
-    fontWeight: '600',
-    minWidth: 32,
-    paddingTop: 2,
-  },
-  verseText: {
+  modalTitleContainer: {
     flex: 1,
-    fontSize: 17,
-    lineHeight: 28,
+    alignItems: 'center',
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  verseScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingLeft: 24,
+    paddingRight: 84, // Leave space for floating action buttons
+  },
+  quoteMark: {
+    fontSize: 50,
+    color: 'rgba(255,255,255,0.3)',
+    fontFamily: 'Georgia',
+    lineHeight: 50,
+    marginBottom: -10,
+  },
+  tiktokVerseText: {
+    fontSize: 24,
+    lineHeight: 36,
+    color: '#fff',
+    fontWeight: '700',
+    textAlign: 'left',
+    textShadowColor: 'rgba(0,0,0,0.3)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  verseReference: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'left',
+    marginTop: 20,
+    fontStyle: 'italic',
+  },
+  floatingActionContainer: {
+    position: 'absolute',
+    right: 16,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 24,
+  },
+  actionButton: {
+    alignItems: 'center',
+    gap: 6,
+  },
+  iconCircle: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  actionText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  progressOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    width: '100%',
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  },
+  progressBarBg: {
+    width: '100%',
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#fff',
+    borderRadius: 2,
   },
   markReadButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#4ade80',
-    padding: 16,
-    borderRadius: 12,
-    marginTop: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 24,
+    marginTop: 16,
     gap: 8,
   },
   markReadButtonText: {

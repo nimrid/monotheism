@@ -130,66 +130,50 @@ export default function BookChaptersScreen() {
 
     const chapters = Array.from({ length: chapterCount }, (_, i) => i + 1);
 
-    // Group chapters by tens for better visual organization
-    const groupedChapters: number[][] = [];
-    for (let i = 0; i < chapters.length; i += 10) {
-      groupedChapters.push(chapters.slice(i, i + 10));
-    }
-
     return (
       <View style={styles.chaptersContainer}>
-        {/* Chapter count info */}
-        <View style={[styles.infoCard, { backgroundColor: colors.background }]}>
+        {/* Modern Chapter Count Widget */}
+        <View style={[styles.infoCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.infoLeft}>
-            <Text style={styles.infoIcon}>📚</Text>
+            <View style={[styles.iconWrapper, { backgroundColor: colors.background }]}>
+              <Text style={styles.infoIcon}>📚</Text>
+            </View>
             <View>
               <Text style={[styles.infoTitle, { color: colors.text }]}>
                 {chapterCount} {chapterCount === 1 ? 'Chapter' : 'Chapters'}
               </Text>
               <Text style={[styles.infoSubtitle, { color: colors.tertiaryText }]}>
-                Tap any chapter to start reading
+                Select a chapter to begin
               </Text>
             </View>
           </View>
         </View>
 
-        {/* Grouped chapters */}
-        {groupedChapters.map((group, groupIndex) => (
-          <View key={groupIndex} style={styles.chapterGroup}>
-            <View style={styles.groupHeader}>
-              <View style={[styles.groupBadge, { backgroundColor: colors.primary }]}>
-                <Text style={styles.groupBadgeText}>
-                  {group[0]}-{group[group.length - 1]}
-                </Text>
+        {/* Continuous Fluid Grid */}
+        <View style={styles.chaptersGrid}>
+          {chapters.map((chapter) => (
+            <TouchableOpacity
+              key={chapter}
+              style={[styles.chapterButton, { backgroundColor: colors.card }]}
+              activeOpacity={0.7}
+              onPress={() => {
+                router.push({
+                  pathname: '/chapter-content',
+                  params: {
+                    bookId: bookId,
+                    bookName: bookName,
+                    chapterId: chapter,
+                    testament: testament,
+                  },
+                });
+              }}
+            >
+              <View style={styles.chapterInner}>
+                <Text style={[styles.chapterNumber, { color: colors.text }]}>{chapter}</Text>
               </View>
-            </View>
-            <View style={styles.chaptersGrid}>
-              {group.map((chapter) => (
-                <TouchableOpacity
-                  key={chapter}
-                  style={[styles.chapterButton, { backgroundColor: colors.card }]}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    router.push({
-                      pathname: '/chapter-content',
-                      params: {
-                        bookId: bookId,
-                        bookName: bookName,
-                        chapterId: chapter,
-                        testament: testament,
-                      },
-                    });
-                  }}
-                >
-                  <View style={[styles.chapterInner, { borderColor: colors.border }]}>
-                    <Text style={[styles.chapterNumber, { color: colors.text }]}>{chapter}</Text>
-                    <View style={[styles.chapterDot, { backgroundColor: colors.primary }]} />
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        ))}
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
     );
   };
@@ -197,22 +181,21 @@ export default function BookChaptersScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={[styles.container, { backgroundColor: colors.card }]}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         {/* Header */}
-        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+        <View style={[styles.header, { backgroundColor: colors.background }]}>
           <TouchableOpacity 
             style={styles.backButton}
             onPress={() => router.back()}
           >
-            <IconSymbol name="chevron.left" size={24} color={colors.text} />
+            <IconSymbol name="chevron.left" size={28} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.titleContainer}>
             <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>{bookName}</Text>
-            <Text style={[styles.subtitle, { color: colors.tertiaryText }]}>Select a chapter</Text>
           </View>
           {bookId && isExtraBiblical !== 'true' && (
             <TouchableOpacity 
-              style={styles.insightsButton}
+              style={[styles.insightsButton, { backgroundColor: colors.card }]}
               onPress={() => {
                 router.push({
                   pathname: '/book-info',
@@ -230,7 +213,7 @@ export default function BookChaptersScreen() {
 
         {/* Chapters */}
         <ScrollView 
-          style={[styles.scrollView, { backgroundColor: colors.card }]}
+          style={[styles.scrollView, { backgroundColor: colors.background }]}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
@@ -250,8 +233,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: 60,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
+    paddingBottom: 16,
   },
   backButton: {
     marginRight: 16,
@@ -261,20 +243,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 2,
-  },
-  subtitle: {
-    fontSize: 14,
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: -0.5,
   },
   insightsButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#fff3e6',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   scrollView: {
     flex: 1,
@@ -290,83 +273,63 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 20,
-    borderRadius: 16,
-    marginBottom: 8,
-    elevation: 2,
+    padding: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    elevation: 4,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
   },
   infoLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 16,
   },
+  iconWrapper: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   infoIcon: {
-    fontSize: 32,
+    fontSize: 28,
   },
   infoTitle: {
     fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 2,
+    fontWeight: '700',
+    marginBottom: 4,
   },
   infoSubtitle: {
-    fontSize: 13,
-  },
-  chapterGroup: {
-    marginBottom: 8,
-  },
-  groupHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  groupBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  groupBadgeText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
   },
   chaptersGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    justifyContent: 'flex-start',
     gap: 12,
   },
   chapterButton: {
-    width: '18%',
+    width: '22%',
     aspectRatio: 1,
-    borderRadius: 16,
-    padding: 2,
-    elevation: 3,
+    borderRadius: 20,
+    elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
   },
   chapterInner: {
     flex: 1,
-    borderRadius: 14,
-    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
   },
   chapterNumber: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  chapterDot: {
-    position: 'absolute',
-    bottom: 8,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
+    fontSize: 22,
+    fontWeight: '700',
   },
   centerContainer: {
     flex: 1,
@@ -395,16 +358,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     paddingVertical: 14,
     backgroundColor: '#ff9500',
-    borderRadius: 12,
+    borderRadius: 16,
     elevation: 3,
     shadowColor: '#ff9500',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 4,
+    shadowRadius: 8,
   },
   retryText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#fff',
   },
 });

@@ -14,9 +14,12 @@
 
 import { useUser } from '@/contexts/UserContext';
 import {
+    createAssociatedTokenAccountInstruction,
     createTransferInstruction,
     getAccount,
     getAssociatedTokenAddress,
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import {
     Connection,
@@ -39,6 +42,45 @@ const SKR_DECIMALS = parseInt(
 );
 const RPC_ENDPOINT =
   process.env.EXPO_PUBLIC_SOLANA_RPC ?? 'https://api.mainnet-beta.solana.com';
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Poll-based transaction confirmation — works over plain HTTPS RPC.
+ * Avoids `signatureSubscribe` (WebSocket) which breaks on HTTP-only endpoints.
+ */
+async function confirmTransactionPolled(
+  connection: Connection,
+  signature: string,
+  blockhash: string,
+  lastValidBlockHeight: number,
+  timeoutMs = 60_000,
+  intervalMs = 2_500
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const blockHeight = await connection.getBlockHeight('confirmed');
+    if (blockHeight > lastValidBlockHeight) {
+      throw new Error('Transaction expired: block height exceeded before confirmation.');
+    }
+
+    const statuses = await connection.getSignatureStatuses([signature]);
+    const status = statuses.value[0];
+    if (status) {
+      if (status.err) {
+        throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
+      }
+      if (
+        status.confirmationStatus === 'confirmed' ||
+        status.confirmationStatus === 'finalized'
+      ) {
+        return; // ✅ confirmed
+      }
+    }
+    await new Promise((res) => setTimeout(res, intervalMs));
+  }
+  throw new Error('Transaction confirmation timed out after 60 seconds.');
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 export type PaymentResult = {
@@ -165,7 +207,7 @@ export function useSolanaPayment() {
         throw err;
       }
 
-      // ── 4. Build SPL transfer transaction ───────────────────────────────────
+      // ── 4. Build SPL transfer transaction ─────────────────────────────────
       const senderATA = await getAssociatedTokenAddress(SKR_MINT, payerPubkey);
       const recipientATA = await getAssociatedTokenAddress(
         SKR_MINT,
@@ -178,7 +220,33 @@ export function useSolanaPayment() {
       const transaction = new Transaction({
         recentBlockhash: blockhash,
         feePayer: payerPubkey,
-      }).add(
+      });
+
+      // ── 4a. Create recipient ATA if it doesn't exist yet ─────────────────
+      let recipientATAExists = false;
+      try {
+        await getAccount(connection, recipientATA);
+        recipientATAExists = true;
+      } catch {
+        recipientATAExists = false;
+      }
+
+      if (!recipientATAExists) {
+        console.log('[SKR Payment] Recipient ATA missing — creating it in the same tx.');
+        transaction.add(
+          createAssociatedTokenAccountInstruction(
+            payerPubkey,        // payer of the ATA creation fee
+            recipientATA,       // the ATA address to create
+            recipientPubkey,    // owner of the new ATA
+            SKR_MINT,           // token mint
+            TOKEN_PROGRAM_ID,
+            ASSOCIATED_TOKEN_PROGRAM_ID
+          )
+        );
+      }
+
+      // ── 4b. Add the SPL transfer instruction ──────────────────────────
+      transaction.add(
         createTransferInstruction(
           senderATA,
           recipientATA,
@@ -190,10 +258,12 @@ export function useSolanaPayment() {
       // ── 5. Sign & send ──────────────────────────────────────────────────────
       const signature = await signerFn(transaction);
 
-      // ── 6. Confirm on-chain (Alchemy RPC) ───────────────────────────────────
-      await connection.confirmTransaction(
-        { signature, blockhash, lastValidBlockHeight },
-        'confirmed'
+      // ── 6. Confirm on-chain (poll-based, HTTP-safe) ────────────────────────
+      await confirmTransactionPolled(
+        connection,
+        signature,
+        blockhash,
+        lastValidBlockHeight
       );
 
       console.log(

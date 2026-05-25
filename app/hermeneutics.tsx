@@ -1,9 +1,9 @@
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useSolanaPayment } from '@/hooks/useSolanaPayment';
-import { useMobileWallet } from '@wallet-ui/react-native-web3js';
+import PremiumPaywallModal from '@/components/PremiumPaywallModal';
+import { hasPremiumAccess } from '@/utils/subscription';
 import { Stack, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -17,10 +17,6 @@ import {
     View
 } from 'react-native';
 import { WebView } from 'react-native-webview';
-
-const RECIPIENT_WALLET = 'GaJrqsUVQ5k5dmX8iacT9F4fHJrp9v11qXPzwWcAHkED';
-// Cost per video in SKR (replace with your pricing decision)
-const WATCH_VIDEO_COST_SKR = 5; // 5 SKR per video
 
 
 
@@ -125,46 +121,24 @@ const { width } = Dimensions.get('window');
 export default function HermeneuticsScreen() {
   const { colors } = useTheme();
   const router = useRouter();
-  const { paying, payWithSKR } = useSolanaPayment();
-  const { signAndSendTransaction } = useMobileWallet();
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
-  const [payingVideoId, setPayingVideoId] = useState<string | null>(null);
+  const [isPremium, setIsPremium] = useState(false);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+
+  useEffect(() => {
+    checkPremiumStatus();
+  }, []);
+
+  const checkPremiumStatus = async () => {
+    const premium = await hasPremiumAccess();
+    setIsPremium(premium);
+  };
 
   const handlePayAndWatch = async (sermon: Sermon) => {
-    setPayingVideoId(sermon.videoId);
-
-    try {
-      console.log('[Hermeneutics] Starting SKR payment for:', sermon.title);
-
-      await payWithSKR(
-        RECIPIENT_WALLET,
-        WATCH_VIDEO_COST_SKR,
-        async (transaction) => {
-          const signature = await signAndSendTransaction(transaction, 0);
-          return signature;
-        }
-      );
-
-      console.log('[Hermeneutics] Payment confirmed, opening video:', sermon.title);
+    if (isPremium) {
       openVideo(sermon.videoId);
-    } catch (error: any) {
-      console.error('[Hermeneutics] Payment failed:', error);
-      const code = error?.code ?? '';
-      if (code === 'WALLET_NOT_CONNECTED') return; // alert already shown by hook
-      if (code === 'USER_REJECTED') {
-        Alert.alert('Cancelled', 'Transaction was cancelled.');
-        return;
-      }
-      if (code === 'INSUFFICIENT_BALANCE') {
-        Alert.alert('Insufficient Balance', error.message);
-        return;
-      }
-      Alert.alert(
-        'Payment Failed',
-        error.message ?? 'Unable to process payment. Please try again.'
-      );
-    } finally {
-      setPayingVideoId(null);
+    } else {
+      setShowPremiumModal(true);
     }
   };
 
@@ -199,12 +173,14 @@ export default function HermeneuticsScreen() {
             </Text>
           </View>
         </View>
-        <View style={[styles.pricingBadge, { backgroundColor: colors.background }]}>
-          <IconSymbol name="play.circle.fill" size={16} color={colors.primary} />
-          <Text style={[styles.pricingText, { color: colors.primary }]}>
-            {WATCH_VIDEO_COST_SKR} SKR per video
-          </Text>
-        </View>
+        {!isPremium && (
+          <View style={[styles.pricingBadge, { backgroundColor: colors.background }]}>
+            <IconSymbol name="star.fill" size={16} color={colors.primary} />
+            <Text style={[styles.pricingText, { color: colors.primary }]}>
+              Premium Feature
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Videos Grid */}
@@ -215,22 +191,19 @@ export default function HermeneuticsScreen() {
               key={sermon.id}
               style={[styles.videoCard, { backgroundColor: colors.card }]}
               onPress={() => handlePayAndWatch(sermon)}
-              disabled={paying}
             >
               <View style={styles.thumbnailContainer}>
                 <Image source={{ uri: sermon.thumbnail }} style={styles.thumbnail} />
                 <View style={styles.playButton}>
-                  {paying && payingVideoId === sermon.videoId ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <IconSymbol name="play.fill" size={24} color="#fff" />
-                  )}
+                  <IconSymbol name="play.fill" size={24} color="#fff" />
                 </View>
-                {/* Price Badge */}
-                <View style={styles.priceBadge}>
-                  <IconSymbol name="creditcard.fill" size={12} color="#fff" />
-                  <Text style={styles.priceText}>{WATCH_VIDEO_COST_SKR} SKR</Text>
-                </View>
+                {/* Premium Badge */}
+                {!isPremium && (
+                  <View style={styles.priceBadge}>
+                    <IconSymbol name="star.fill" size={12} color="#fff" />
+                    <Text style={styles.priceText}>Premium</Text>
+                  </View>
+                )}
               </View>
               <View style={styles.videoInfo}>
                 <Text style={[styles.videoTitle, { color: colors.text }]} numberOfLines={2}>
@@ -306,6 +279,13 @@ export default function HermeneuticsScreen() {
           )}
         </View>
       </Modal>
+
+      {/* Premium Paywall Modal */}
+      <PremiumPaywallModal
+        visible={showPremiumModal}
+        onClose={() => setShowPremiumModal(false)}
+        onSuccess={() => setIsPremium(true)}
+      />
     </View>
     </>
   );

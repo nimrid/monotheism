@@ -1,25 +1,12 @@
+import { useTheme } from '@/contexts/ThemeContext';
 import { Tabs } from 'expo-router';
 import React from 'react';
-import { useColorScheme } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 
 export default function TabLayout() {
-  const systemColorScheme = useColorScheme();
-  
-  // Use system color scheme for tab styling
-  const isDark = systemColorScheme === 'dark';
-  const colors = {
-    background: isDark ? '#1a1a1a' : '#f5f5f5',
-    card: isDark ? '#2a2a2a' : '#fff',
-    text: isDark ? '#fff' : '#000',
-    secondaryText: isDark ? '#aaa' : '#666',
-    tertiaryText: isDark ? '#888' : '#999',
-    border: isDark ? '#3a3a3a' : '#f0f0f0',
-    buttonBg: isDark ? '#3a3a3a' : '#e8e8e8',
-    primary: '#ff9500',
-  };
+  const { colors } = useTheme();
 
   return (
     <Tabs

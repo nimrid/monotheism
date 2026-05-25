@@ -5,8 +5,11 @@ import { API_URL } from '@/utils/api-config';
 import { markChapterAsRead } from '@/utils/reading-plan-manager';
 import { saveReadingProgress } from '@/utils/reading-progress';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { ActivityIndicator, Alert, FlatList, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions, ViewToken } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Clipboard from 'expo-clipboard';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const RAPIDAPI_KEY = process.env.EXPO_PUBLIC_RAPIDAPI_KEY;
 const RAPIDAPI_HOST = process.env.EXPO_PUBLIC_RAPIDAPI_HOST;
@@ -16,12 +19,22 @@ type Verse = {
   chapter?: string;
   verse: string;
   text: string;
-  // Extra Biblical fields
   b?: string;
   c?: string;
   v?: string;
   t?: string;
 };
+
+// Dark aesthetic gradients for Gen Z TikTok doom-scrolling vibe
+const GRADIENTS = [
+  ['#0F2027', '#203A43', '#2C5364'],
+  ['#141E30', '#243B55'],
+  ['#16222A', '#3A6073'],
+  ['#000000', '#434343'],
+  ['#232526', '#414345'],
+  ['#0f0c29', '#302b63', '#24243e'],
+  ['#1e130c', '#9a8478']
+];
 
 export default function ChapterContentScreen() {
   const { colors } = useTheme();
@@ -33,10 +46,12 @@ export default function ChapterContentScreen() {
   const [verses, setVerses] = useState<Verse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedVerse, setSelectedVerse] = useState<number | null>(null);
-  const [savingVerse, setSavingVerse] = useState(false);
-  const scrollViewRef = useRef<ScrollView>(null);
+  const [savingVerse, setSavingVerse] = useState<{ [key: number]: boolean }>({});
   const [scrollProgress, setScrollProgress] = useState(0);
+  
+  const { height, width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
     fetchChapterContent();
@@ -62,13 +77,6 @@ export default function ChapterContentScreen() {
       }
     }
   }, [scrollProgress]);
-
-  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    const scrollPercentage = (contentOffset.y / (contentSize.height - layoutMeasurement.height)) * 100;
-    const progress = Math.min(Math.max(scrollPercentage, 0), 100);
-    setScrollProgress(Math.round(progress));
-  };
 
   const fetchChapterContent = async () => {
     setLoading(true);
@@ -150,7 +158,7 @@ export default function ChapterContentScreen() {
     }
   };
 
-  const handleSaveVerse = async (verseIndex: number) => {
+  const handleSaveVerse = async (index: number) => {
     if (!walletAddress) {
       Alert.alert(
         'Wallet Required',
@@ -163,11 +171,11 @@ export default function ChapterContentScreen() {
       return;
     }
 
-    const verse = verses[verseIndex];
+    const verse = verses[index];
     const verseNumber = verse.verse || verse.v || '';
     const verseText = verse.text || verse.t || '';
 
-    setSavingVerse(true);
+    setSavingVerse(prev => ({ ...prev, [index]: true }));
     try {
       const response = await fetch(`${API_URL}/users/${walletAddress}/saved-verses`, {
         method: 'POST',
@@ -191,99 +199,106 @@ export default function ChapterContentScreen() {
       if (!response.ok) {
         throw new Error('Failed to save verse');
       }
-
+      
       Alert.alert('Saved!', 'Verse saved successfully.');
-      setSelectedVerse(null);
     } catch (error) {
       console.error('Error saving verse:', error);
       Alert.alert('Error', 'Failed to save verse. Please try again.');
     } finally {
-      setSavingVerse(false);
+      setSavingVerse(prev => ({ ...prev, [index]: false }));
     }
   };
 
-  const renderContent = () => {
-    if (loading) {
-      return (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      );
-    }
+  const handleShare = async (verse: Verse) => {
+    const verseNum = verse.verse || verse.v || '';
+    const verseText = verse.text || verse.t || '';
+    await Share.share({
+      message: `"${verseText}"\n\n— ${bookName} ${chapterId}:${verseNum}`
+    });
+  };
 
-    if (error) {
-      return (
-        <View style={styles.centerContainer}>
-          <Text style={[styles.errorText, { color: '#ff3b30' }]}>{error}</Text>
-          <TouchableOpacity 
-            style={styles.retryButton}
-            onPress={() => fetchChapterContent()}
-          >
-            <Text style={styles.retryText}>Retry</Text>
+  const handleCopy = async (verse: Verse) => {
+    const verseNum = verse.verse || verse.v || '';
+    const verseText = verse.text || verse.t || '';
+    await Clipboard.setStringAsync(`"${verseText}"\n\n— ${bookName} ${chapterId}:${verseNum}`);
+    Alert.alert('Copied', 'Verse copied to clipboard');
+  };
+
+  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    if (viewableItems.length > 0 && verses.length > 0) {
+      const index = viewableItems[0].index || 0;
+      const progress = Math.round(((index + 1) / verses.length) * 100);
+      setScrollProgress(progress);
+    }
+  }, [verses]);
+
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
+
+  const renderVerseItem = ({ item, index }: { item: Verse; index: number }) => {
+    const verseNum = item.verse || item.v || '';
+    const verseText = item.text || item.t || '';
+    const gradient = GRADIENTS[index % GRADIENTS.length];
+    
+    return (
+      <View style={{ height, width }}>
+        <LinearGradient
+          colors={gradient}
+          style={StyleSheet.absoluteFillObject}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        />
+        
+        {/* Centered Verse Text (Doom scrolling aesthetic) */}
+        <ScrollView 
+          contentContainerStyle={[styles.verseScrollContent, {
+            paddingTop: Math.max(insets.top, 40) + 60,
+            paddingBottom: insets.bottom + 120,
+          }]}
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.quoteMark}>"</Text>
+          <Text style={styles.tiktokVerseText}>{verseText}</Text>
+          <Text style={[styles.quoteMark, { textAlign: 'right', marginTop: -10 }]}>"</Text>
+          <Text style={styles.verseReference}>
+            — {bookName} {chapterId}:{verseNum}
+          </Text>
+        </ScrollView>
+
+        {/* Floating Action Buttons (TikTok style right edge) */}
+        <View style={[styles.floatingActionContainer, { bottom: insets.bottom + 80 }]}>
+          <TouchableOpacity style={styles.actionButton} onPress={() => handleSaveVerse(index)}>
+            <View style={styles.iconCircle}>
+              {savingVerse[index] ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <IconSymbol name="heart.fill" size={26} color="#fff" />
+              )}
+            </View>
+            <Text style={styles.actionText}>Save</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionButton} onPress={() => handleCopy(item)}>
+            <View style={styles.iconCircle}>
+              <IconSymbol name="doc.on.doc" size={24} color="#fff" />
+            </View>
+            <Text style={styles.actionText}>Copy</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity style={styles.actionButton} onPress={() => handleShare(item)}>
+            <View style={styles.iconCircle}>
+              <IconSymbol name="square.and.arrow.up" size={26} color="#fff" />
+            </View>
+            <Text style={styles.actionText}>Share</Text>
           </TouchableOpacity>
         </View>
-      );
-    }
 
-    if (verses.length === 0) {
-      return (
-        <View style={styles.centerContainer}>
-          <Text style={[styles.emptyText, { color: colors.tertiaryText }]}>No verses available</Text>
+        {/* Bottom Progress Indicator */}
+        <View style={[styles.progressOverlay, { paddingBottom: insets.bottom + 20 }]}>
+          <View style={styles.progressBarBg}>
+            <View style={[styles.progressBarFill, { width: `${((index + 1) / verses.length) * 100}%` }]} />
+          </View>
+          <Text style={styles.progressText}>Verse {index + 1} of {verses.length}</Text>
         </View>
-      );
-    }
-
-    return (
-      <View style={styles.versesContainer}>
-        {verses.map((verse, index) => {
-          const verseNumber = verse.verse || verse.v || '';
-          const verseText = verse.text || verse.t || '';
-          const isSelected = selectedVerse === index;
-          
-          return (
-            <TouchableOpacity
-              key={index}
-              style={[
-                styles.verseRow,
-                isSelected && { backgroundColor: colors.background, padding: 12, borderRadius: 8, marginHorizontal: -12 }
-              ]}
-              onPress={() => setSelectedVerse(isSelected ? null : index)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.verseNumber, { color: colors.primary }]}>{verseNumber}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.verseText, { color: colors.text }]}>{verseText}</Text>
-                {isSelected && (
-                  <View style={styles.verseActions}>
-                    <TouchableOpacity
-                      style={[styles.actionButton, { backgroundColor: colors.primary }]}
-                      onPress={() => handleSaveVerse(index)}
-                      disabled={savingVerse}
-                    >
-                      {savingVerse ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                      ) : (
-                        <>
-                          <IconSymbol name="bookmark" size={16} color="#fff" />
-                          <Text style={styles.actionButtonText}>Save</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.actionButton, { backgroundColor: colors.card }]}
-                      onPress={() => {
-                        // Share functionality
-                      }}
-                    >
-                      <IconSymbol name="square.and.arrow.up" size={16} color={colors.text} />
-                      <Text style={[styles.actionButtonText, { color: colors.text }]}>Share</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            </TouchableOpacity>
-          );
-        })}
       </View>
     );
   };
@@ -291,36 +306,54 @@ export default function ChapterContentScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={[styles.container, { backgroundColor: colors.card }]}>
-        {/* Header */}
-        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => router.back()}
-          >
-            <IconSymbol name="chevron.left" size={24} color={colors.text} />
+      <View style={[styles.container, { backgroundColor: '#000' }]}>
+        
+        {loading ? (
+          <View style={styles.centerContainer}>
+            <ActivityIndicator size="large" color="#fff" />
+          </View>
+        ) : error ? (
+          <View style={styles.centerContainer}>
+            <Text style={[styles.errorText, { color: '#ff3b30' }]}>{error}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={() => fetchChapterContent()}>
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : verses.length === 0 ? (
+          <View style={styles.centerContainer}>
+            <Text style={styles.emptyText}>No verses available</Text>
+          </View>
+        ) : (
+          <FlatList
+            ref={flatListRef}
+            data={verses}
+            renderItem={renderVerseItem}
+            keyExtractor={(_, index) => index.toString()}
+            pagingEnabled
+            showsVerticalScrollIndicator={false}
+            snapToAlignment="start"
+            decelerationRate="fast"
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={viewabilityConfig}
+            bounces={false}
+            initialNumToRender={3}
+            maxToRenderPerBatch={3}
+            windowSize={5}
+          />
+        )}
+
+        {/* Floating Top Header (Transparent) */}
+        <View style={[styles.floatingHeader, { paddingTop: Math.max(insets.top, 20) }]}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <IconSymbol name="chevron.left" size={28} color="#fff" />
           </TouchableOpacity>
-          <View style={styles.titleContainer}>
-            <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
               {bookName} {chapterId}
             </Text>
           </View>
-          <TouchableOpacity style={styles.menuButton}>
-            <IconSymbol name="ellipsis" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <View style={{ width: 44 }} />
         </View>
-
-        {/* Content */}
-        <ScrollView 
-          ref={scrollViewRef}
-          style={styles.scrollView} 
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          onScroll={handleScroll}
-          scrollEventThrottle={16}
-        >
-          {renderContent()}
-        </ScrollView>
       </View>
     </>
   );
@@ -330,76 +363,122 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-  },
-  backButton: {
-    marginRight: 12,
-    padding: 4,
-  },
-  titleContainer: {
-    flex: 1,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  menuButton: {
-    padding: 4,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  versesContainer: {
-    gap: 16,
-  },
-  verseRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  verseNumber: {
-    fontSize: 14,
-    fontWeight: '600',
-    minWidth: 28,
-    paddingTop: 2,
-  },
-  verseText: {
-    flex: 1,
-    fontSize: 17,
-    lineHeight: 28,
-  },
-  verseActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  actionButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#fff',
-  },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 100,
+  },
+  floatingHeader: {
+    position: 'absolute',
+    top: 0,
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    zIndex: 10,
+    backgroundColor: 'rgba(0,0,0,0.2)', // slight dark gradient effect at top
+  },
+  backButton: {
+    padding: 8,
+    width: 44,
+  },
+  headerTitleContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  verseScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingLeft: 24,
+    paddingRight: 84, // Leave space for floating action buttons
+  },
+  quoteMark: {
+    fontSize: 50,
+    color: 'rgba(255,255,255,0.3)',
+    fontFamily: 'Georgia',
+    lineHeight: 50,
+    marginBottom: -10,
+  },
+  tiktokVerseText: {
+    fontSize: 24,
+    lineHeight: 36,
+    color: '#fff',
+    fontWeight: '700',
+    textAlign: 'left',
+    textShadowColor: 'rgba(0,0,0,0.3)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  verseReference: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'left',
+    marginTop: 20,
+    fontStyle: 'italic',
+  },
+  floatingActionContainer: {
+    position: 'absolute',
+    right: 16,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 24,
+  },
+  actionButton: {
+    alignItems: 'center',
+    gap: 6,
+  },
+  iconCircle: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  actionText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  progressOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    width: '100%',
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  },
+  progressBarBg: {
+    width: '100%',
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#fff',
+    borderRadius: 2,
+  },
+  progressText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 13,
+    fontWeight: '500',
   },
   errorText: {
     fontSize: 15,
@@ -407,6 +486,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 15,
+    color: '#fff',
   },
   retryButton: {
     paddingHorizontal: 24,
