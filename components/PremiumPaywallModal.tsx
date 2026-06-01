@@ -152,7 +152,7 @@ export default function PremiumPaywallModal({ visible, onClose, onSuccess }: Pro
           {/* Header */}
           <View style={styles.header}>
             <Image
-              source={require('@/assets/images/app-logo.jpg')}
+              source={require('@/assets/images/monotheism_logo.png')}
               style={styles.headerLogo}
               resizeMode="contain"
             />

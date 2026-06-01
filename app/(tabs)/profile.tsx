@@ -29,34 +29,6 @@ export default function ProfileScreen() {
   // Use progress tracking hook
   const { stats, streak, loading } = useReadingProgress(activePlanId);
 
-  useEffect(() => {
-    loadActivePlanId();
-    loadDayStreak();
-  }, []);
-
-  // Balance is loaded by useFocusEffect below — no separate useEffect needed.
-
-  // When the MWA hook reports a connected account, sync it to our UserContext
-  useEffect(() => {
-    if (account?.address && !walletAddress) {
-      const addr = account.address.toBase58();
-      // connectWallet (saveWallet) is non-fatal — wallet is persisted locally even if backend is unreachable
-      saveWallet(addr).catch((e: any) =>
-        console.warn('Failed to persist wallet address:', e)
-      );
-    }
-  }, [account]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadActivePlanId();
-      loadDayStreak();
-      if (walletAddress) {
-        loadSKRBalance();
-      }
-    }, [walletAddress, loadSKRBalance])
-  );
-
   const loadDayStreak = async () => {
     const streak = await getDayStreak();
     setDayStreak(streak);
@@ -85,6 +57,34 @@ export default function ProfileScreen() {
       isFetchingBalance.current = false;
     }
   }, [walletAddress]);
+
+  useEffect(() => {
+    loadActivePlanId();
+    loadDayStreak();
+  }, []);
+
+  // Balance is loaded by useFocusEffect below — no separate useEffect needed.
+
+  // When the MWA hook reports a connected account, sync it to our UserContext
+  useEffect(() => {
+    if (account?.address && !walletAddress) {
+      const addr = account.address.toBase58();
+      // connectWallet (saveWallet) is non-fatal — wallet is persisted locally even if backend is unreachable
+      saveWallet(addr).catch((e: any) =>
+        console.warn('Failed to persist wallet address:', e)
+      );
+    }
+  }, [account]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadActivePlanId();
+      loadDayStreak();
+      if (walletAddress) {
+        loadSKRBalance();
+      }
+    }, [walletAddress, loadSKRBalance])
+  );
 
   const handleConnectWallet = async () => {
     setConnecting(true);
@@ -166,7 +166,7 @@ export default function ProfileScreen() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Image
-            source={require('@/assets/images/app-logo.jpg')}
+            source={require('@/assets/images/monotheism_logo.png')}
             style={styles.headerLogo}
             resizeMode="contain"
           />

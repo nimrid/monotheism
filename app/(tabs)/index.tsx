@@ -19,7 +19,7 @@ type VerseOfDay = {
 };
 
 export default function HomeScreen() {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const { walletAddress } = useUser();
   const router = useRouter();
   
@@ -196,7 +196,7 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Image
-            source={require('@/assets/images/app-logo.jpg')}
+            source={require('@/assets/images/monotheism_logo.png')}
             style={styles.headerLogo}
             resizeMode="contain"
           />

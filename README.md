@@ -3,7 +3,7 @@
 Welcome to **Monotheism**, a premium, feature-rich React Native mobile application built on Expo, designed to enrich your biblical study and reading journey. With structured plans, study aids, and advanced Web3 integrations, Monotheism merges classic theological research with modern app features.
 
 <p align="center">
-  <img src="./assets/images/app-logo.png" width="150" height="150" style="border-radius: 20%;" alt="Monotheism Logo" />
+  <img src="./assets/images/monotheism_logo.png" width="150" height="150" style="border-radius: 20%;" alt="Monotheism Logo" />
 </p>
 
 ---

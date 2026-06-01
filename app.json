@@ -23,7 +23,12 @@
       "predictiveBackGestureEnabled": false,
       "package": "com.anonymous.monotheism",
       "enableProguardInReleaseBuilds": true,
-      "enableShrinkResourcesInReleaseBuilds": true
+      "enableShrinkResourcesInReleaseBuilds": true,
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "VIBRATE"
+      ]
     },
     "web": {
       "output": "static",
@@ -34,7 +39,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#1a3a1a",
@@ -42,7 +47,8 @@
             "backgroundColor": "#0d1f0d"
           }
         }
-      ]
+      ],
+      "./withAbiSplits"
     ],
     "experiments": {
       "typedRoutes": true,
